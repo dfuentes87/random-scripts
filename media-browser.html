@@ -10,10 +10,31 @@
       --fg: #e0e0e0;
       --accent: #1e88e5;
     }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg); color: var(--fg); font-family: sans-serif; }
-    #path { padding: 8px; font-size: 0.9rem; }
-    #gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 8px; padding: 8px; }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: sans-serif;
+      /* respect mobile safe areas (notches) */
+      padding: env(safe-area-inset-top)
+               env(safe-area-inset-right)
+               env(safe-area-inset-bottom)
+               env(safe-area-inset-left);
+    }
+    #path {
+      padding: 8px;
+      font-size: 0.9rem;
+    }
+    #gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px,1fr));
+      gap: 8px;
+      padding: 8px;
+    }
     .thumb, .dir {
       position: relative;
       aspect-ratio: 1/1;
@@ -26,10 +47,25 @@
       justify-content: center;
       text-align: center;
       transition: border-color .2s, background .2s;
+      /* improve touch response on mobile */
+      touch-action: manipulation;
     }
-    .thumb:hover, .dir:hover { border-color: var(--accent); background: rgba(30,136,229,0.1); }
-    .thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; background: #000; }
-    .dir { background: #1f1f1f; font-weight: bold; color: var(--fg); user-select: none; }
+    .thumb:hover, .dir:hover {
+      border-color: var(--accent);
+      background: rgba(30,136,229,0.1);
+    }
+    .thumb img, .thumb video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+    .dir {
+      background: #1f1f1f;
+      font-weight: bold;
+      color: var(--fg);
+      user-select: none;
+    }
     .play-icon {
       position: absolute;
       pointer-events: none;
@@ -46,11 +82,48 @@
       justify-content: center;
       z-index: 1000;
     }
-    #modal.active { display: flex; }
-    #modal-content img, #modal-content video {
+    #modal.active {
+      display: flex;
+    }
+    #modal-content img,
+    #modal-content video {
       max-width: 100vw;
       max-height: 100vh;
       object-fit: contain;
+    }
+    /* enable pinch‑zoom on modal images */
+    #modal-content img {
+      touch-action: pinch-zoom;
+    }
+    #modal-content {
+      position: relative;
+    }
+    .close-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      font-size: 2rem;
+      color: var(--fg);
+      cursor: pointer;
+      z-index: 1001;
+    }
+
+    /* Mobile adjustments */
+    @media (max-width: 600px) {
+      #gallery {
+        grid-template-columns: repeat(auto-fit, minmax(120px,1fr));
+        gap: 4px;
+      }
+      .thumb, .dir {
+        border-width: 1px;
+      }
+      .play-icon {
+        font-size: 1.5rem;
+      }
+      #path {
+        font-size: 0.8rem;
+        padding: 4px;
+      }
     }
   </style>
 </head>
@@ -63,173 +136,205 @@
   </div>
 
   <script>
-    (function(){
-      console.log('Media browser script loaded');
-      const gallery = document.getElementById('gallery');
-      const pathBar = document.getElementById('path');
-      const modal = document.getElementById('modal');
-      const modalContent = document.getElementById('modal-content');
-      const base = '/my-media/';
-      let current = '';
-      let mediaEntries = [];
-      let currentIndex = 0;
-      const mediaRE = /\.(jpe?g|png|gif|webp|mp4|webm|ogg)$/i;
+  (function(){
+    console.log('Media browser script loaded');
+    const gallery = document.getElementById('gallery');
+    const pathBar = document.getElementById('path');
+    const modal = document.getElementById('modal');
+    const modalContent = document.getElementById('modal-content');
+    const base = '/Private/';
+    let current = '';
+    let mediaEntries = [];
+    let currentIndex = 0;
+    const mediaRE = /\.(jpe?g|png|gif|webp|mp4|webm|ogg)$/i;
 
-      // Lazy-load thumbnails with IntersectionObserver
-      const observer = new IntersectionObserver((entries, obs) => {
-        entries.forEach(e => {
-          if (e.isIntersecting) {
-            const el = e.target;
-            el.src = el.dataset.src;
-            obs.unobserve(el);
-          }
-        });
-      }, { rootMargin: '100px' });
+    // Lazy-load thumbnails with IntersectionObserver
+    const observer = new IntersectionObserver((entries, obs) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          const el = e.target;
+          el.src = el.dataset.src;
+          obs.unobserve(el);
+        }
+      });
+    }, { rootMargin: '100px' });
 
-      async function listDir(dir) {
-        const url = base + dir;
-        console.log(`Fetching directory: ${url}`);
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-        const text = await res.text();
-        const doc = new DOMParser().parseFromString(text, 'text/html');
+    async function listDir(dir) {
+      const url = base + dir;
+      console.log(`Fetching directory: ${url}`);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const text = await res.text();
+      const doc = new DOMParser().parseFromString(text, 'text/html');
 
-        // Collect hrefs, strip queries, drop ../
-        const hrefs = Array.from(doc.querySelectorAll('a'))
-          .map(a => a.getAttribute('href'))
-          .map(h => h && h.split('?')[0])
-          .filter(h => h && h !== '../' && !h.startsWith('../'));
+      // Collect hrefs, strip query params, drop ../
+      const hrefs = Array.from(doc.querySelectorAll('a'))
+        .map(a => a.getAttribute('href'))
+        .map(h => h && h.split('?')[0])
+        .filter(h => h && h !== '../' && !h.startsWith('../'));
 
-        // Strip leading ./ and normalize
-        const names = hrefs.map(h => h.replace(/^\.\//, ''));
+      // Normalize names, strip leading ./
+      const names = hrefs.map(h => h.replace(/^\.\//, ''));
 
-        // Keep only directories (ending with /) or media files
-        return names
-          .filter(n => n.endsWith('/') || mediaRE.test(n))
-          .map(name => ({ name, url: base + dir + name }));
+      // Return only dirs (/) or media files
+      return names
+        .filter(n => n.endsWith('/') || mediaRE.test(n))
+        .map(name => ({ name, url: base + dir + name }));
+    }
+
+    async function render() {
+      gallery.innerHTML = '';
+      const displayPath = current.replace(/\/$/, '');
+      pathBar.textContent = '/' + displayPath;
+
+      let entries;
+      try {
+        entries = await listDir(current);
+      } catch (err) {
+        console.error(err);
+        gallery.textContent = `Error: ${err.message}`;
+        return;
       }
 
-      async function render() {
-        gallery.innerHTML = '';
-        const displayPath = current.replace(/\/$/, '');
-        pathBar.textContent = '/' + displayPath;
-
-        let entries;
-        try {
-          entries = await listDir(current);
-        } catch (e) {
-          console.error(e);
-          gallery.textContent = `Error: ${e.message}`;
-          return;
-        }
-
-        // Parent navigation
-        if (current) {
-          const up = document.createElement('div');
-          up.className = 'dir';
-          up.textContent = '⬆️ Parent';
-          up.onclick = () => {
-            current = current.replace(/[^/]+\/$/, '');
-            render();
-          };
-          gallery.appendChild(up);
-        }
-
-        // Subdirectories
-        entries
-          .filter(e => e.name.endsWith('/'))
-          .forEach(({ name }) => {
-            const d = document.createElement('div');
-            d.className = 'dir';
-            d.textContent = decodeURIComponent(name.replace(/\/$/, ''));
-            d.onclick = () => {
-              current += name;
-              render();
-            };
-            gallery.appendChild(d);
-          });
-
-        // Media thumbnails
-        mediaEntries = entries.filter(e => mediaRE.test(e.name));
-        mediaEntries.forEach((entry, idx) => {
-          const { name, url } = entry;
-          const container = document.createElement('div');
-          container.className = 'thumb';
-          container.onclick = () => {
-            const v = container.querySelector('video');
-            if (v) v.pause();
-            openModalAt(idx);
-          };
-
-          let el;
-          if (/\.(mp4|webm|ogg)$/i.test(name)) {
-            el = document.createElement('video');
-            el.dataset.src = url;
-            el.preload = 'metadata';
-            const icon = document.createElement('div');
-            icon.className = 'play-icon';
-            icon.textContent = '▶';
-            container.appendChild(icon);
-          } else {
-            el = document.createElement('img');
-            el.dataset.src = url;
-            el.alt = name;
-          }
-          container.appendChild(el);
-          observer.observe(el);
-          gallery.appendChild(container);
-        });
+      // Parent nav
+      if (current) {
+        const up = document.createElement('div');
+        up.className = 'dir';
+        up.textContent = '⬆️ Parent';
+        up.onclick = () => {
+          current = current.replace(/[^/]+\/$/, '');
+          render();
+        };
+        gallery.appendChild(up);
       }
 
-      function openModalAt(idx) {
-        const { name, url } = mediaEntries[idx];
-        currentIndex = idx;
-        modalContent.innerHTML = '';
+      // Subdirectories
+      entries.filter(e => e.name.endsWith('/')).forEach(({ name }) => {
+        const d = document.createElement('div');
+        d.className = 'dir';
+        d.textContent = decodeURIComponent(name.replace(/\/$/, ''));
+        d.onclick = () => {
+          current += name;
+          render();
+        };
+        gallery.appendChild(d);
+      });
+
+      // Media thumbnails
+      mediaEntries = entries.filter(e => mediaRE.test(e.name));
+      mediaEntries.forEach((entry, idx) => {
+        const { name, url } = entry;
+        const container = document.createElement('div');
+        container.className = 'thumb';
+        container.onclick = () => {
+          const v = container.querySelector('video');
+          if (v) v.pause();
+          openModalAt(idx);
+        };
+
         let el;
         if (/\.(mp4|webm|ogg)$/i.test(name)) {
           el = document.createElement('video');
-          el.src = url;
+          el.dataset.src = url;
+          el.preload = 'metadata';
           el.controls = true;
+          const icon = document.createElement('div');
+          icon.className = 'play-icon';
+          icon.textContent = '▶';
+          container.appendChild(icon);
         } else {
           el = document.createElement('img');
-          el.src = url;
+          el.dataset.src = url;
+          el.alt = name;
         }
-        modalContent.appendChild(el);
-        modal.classList.add('active');
-        const fn = modal.requestFullscreen || modal.webkitRequestFullscreen || modal.msRequestFullscreen;
-        if (typeof fn === 'function') {
-          try { fn.call(modal); } catch {}
-        }
+        container.appendChild(el);
+        observer.observe(el);
+        gallery.appendChild(container);
+      });
+    }
+
+    function openModalAt(idx) {
+      const { name, url } = mediaEntries[idx];
+      currentIndex = idx;
+      modalContent.innerHTML = '';
+      // add a close button for mobile
+      const closeBtn = document.createElement('div');
+      closeBtn.className = 'close-btn';
+      closeBtn.textContent = '×';
+      closeBtn.onclick = closeModal;
+      modalContent.appendChild(closeBtn);
+      let el;
+      if (/\.(mp4|webm|ogg)$/i.test(name)) {
+        el = document.createElement('video');
+        el.src = url;
+        el.controls = true;
+      } else {
+        el = document.createElement('img');
+        el.src = url;
       }
+      modalContent.appendChild(el);
+      modal.classList.add('active');
+      const fn = modal.requestFullscreen ||
+                 modal.webkitRequestFullscreen ||
+                 modal.msRequestFullscreen;
+      if (typeof fn === 'function') {
+        try { fn.call(modal); } catch {}
+      }
+    }
+    function closeModal() {
+      // exit fullscreen if active
+      if (document.fullscreenElement) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (typeof exit === 'function') exit.call(document);
+      }
+      modal.classList.remove('active');
+      modalContent.innerHTML = '';
+    }
 
-      // Keyboard & close handlers
-      document.addEventListener('keydown', e => {
-        if (!modal.classList.contains('active')) return;
-        if (e.key === 'Escape') {
-          const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-          if (typeof exit === 'function') exit.call(document);
-        } else if (e.key === 'ArrowLeft') {
-          openModalAt((currentIndex - 1 + mediaEntries.length) % mediaEntries.length);
-        } else if (e.key === 'ArrowRight') {
-          openModalAt((currentIndex + 1) % mediaEntries.length);
-        }
-      });
-      modal.addEventListener('click', e => {
-        if (e.target === modal) {
-          const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-          if (typeof exit === 'function') exit.call(document);
-        }
-      });
-      document.addEventListener('fullscreenchange', () => {
-        if (!document.fullscreenElement && modal.classList.contains('active')) {
-          modal.classList.remove('active');
-          modalContent.innerHTML = '';
-        }
-      });
+    // Keyboard & close handlers
+    document.addEventListener('keydown', e => {
+      if (!modal.classList.contains('active')) return;
+      if (e.key === 'Escape') {
+        closeModal();
+      } else if (e.key === 'ArrowLeft') {
+        openModalAt((currentIndex - 1 + mediaEntries.length) % mediaEntries.length);
+      } else if (e.key === 'ArrowRight') {
+        openModalAt((currentIndex + 1) % mediaEntries.length);
+      }
+    });
+    modal.addEventListener('click', e => {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && modal.classList.contains('active')) {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+      }
+    });
 
-      // Initial render
-      render();
-    })();
+    // Swipe navigation on touch devices
+    if ('ontouchstart' in window) {
+      let touchStartX = 0;
+      modal.addEventListener('touchstart', e => {
+        touchStartX = e.changedTouches[0].clientX;
+      });
+      modal.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(dx) > 50) {
+          if (dx > 0) {
+            openModalAt((currentIndex - 1 + mediaEntries.length) % mediaEntries.length);
+          } else {
+            openModalAt((currentIndex + 1) % mediaEntries.length);
+          }
+        }
+      });
+    }
+
+    // Kick it off
+    render();
+  })();
   </script>
 </body>
 </html>
