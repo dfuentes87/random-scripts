@@ -314,6 +314,19 @@
       }
     });
 
+    // Ensure any video element in fullscreen uses contain aspect
+    function applyFullScreenVideoStyle() {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+      if (fsEl && fsEl.tagName === 'VIDEO') {
+        fsEl.style.objectFit = 'contain';
+        fsEl.style.width = 'auto';
+        fsEl.style.height = '100vh';
+      }
+    }
+    document.addEventListener('fullscreenchange', applyFullScreenVideoStyle);
+    document.addEventListener('webkitfullscreenchange', applyFullScreenVideoStyle);
+    document.addEventListener('msfullscreenchange', applyFullScreenVideoStyle);
+
     // Swipe navigation on touch devices
     if ('ontouchstart' in window) {
       let touchStartX = 0;
