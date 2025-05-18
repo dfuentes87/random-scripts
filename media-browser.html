@@ -323,9 +323,24 @@
         fsEl.style.height = '100vh';
       }
     }
+
     document.addEventListener('fullscreenchange', applyFullScreenVideoStyle);
     document.addEventListener('webkitfullscreenchange', applyFullScreenVideoStyle);
     document.addEventListener('msfullscreenchange', applyFullScreenVideoStyle);
+
+    // Reset thumbnail videos when exiting fullscreen
+    function resetThumbnailVideoStyles() {
+      if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
+        document.querySelectorAll('.thumb video').forEach(v => {
+          v.style.objectFit = '';
+          v.style.width = '';
+          v.style.height = '';
+        });
+      }
+    }
+    document.addEventListener('fullscreenchange', resetThumbnailVideoStyles);
+    document.addEventListener('webkitfullscreenchange', resetThumbnailVideoStyles);
+    document.addEventListener('msfullscreenchange', resetThumbnailVideoStyles);
 
     // Swipe navigation on touch devices
     if ('ontouchstart' in window) {
