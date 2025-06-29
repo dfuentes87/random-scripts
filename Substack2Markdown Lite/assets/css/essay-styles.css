@@ -109,3 +109,9 @@ h6 { font-size: 1em; }
     margin: 2em auto;
     max-width: 70ch;
 }
+
+a {
+    overflow-wrap: break-word;
+    word-break: break-all;
+    white-space: normal;
+}
