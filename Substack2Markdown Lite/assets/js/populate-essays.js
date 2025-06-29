@@ -12,7 +12,7 @@ function populateEssays(data) {
     const essaysContainer = document.getElementById('essays-container');
     const list = data.map(essay => `
         <li>
-            <a href="../${essay.html_link}" target="_blank">${essay.title}</a>
+            <a href="../${essay.html_link}">${essay.title}</a>
             <div class="subtitle">${essay.subtitle}</div>
             <div class="metadata">${essay.date}</div>
         </li>
