@@ -11,6 +11,7 @@ import markdown
 import requests
 from tqdm import tqdm
 from xml.etree import ElementTree as ET
+import re  # for regex-based link rewriting
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -20,12 +21,15 @@ from selenium.webdriver.chrome.service import Service
 from urllib.parse import urlparse
 from config import EMAIL, PASSWORD
 
+from typing import Optional  # ensure Optional is imported
+
 USE_PREMIUM: bool = False  # Set to True if you want to login to Substack and convert paid for posts
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"  # Substack you want to convert to markdown
 BASE_MD_DIR: str = "md"  # Name of the directory we'll save the .md essay files
 BASE_HTML_DIR: str = "html"  # Name of the directory we'll save the .html essay files
 HTML_TEMPLATE: str = "author_template.html"  # HTML template to use for the author page
 JSON_DATA_DIR: str = "data"
+ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.lainnetwork.io"  # set to a custom domain like "astralcodexten.example.net"
 
 
 def extract_main_part(url: str) -> str:
@@ -66,12 +70,14 @@ def generate_html_file(author_name: str) -> None:
 
 
 class BaseSubstackScraper(ABC):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, alt_site_domain: Optional[str] = None):
         if not base_substack_url.endswith("/"):
             base_substack_url += "/"
         self.base_substack_url: str = base_substack_url
 
         self.writer_name: str = extract_main_part(base_substack_url)
+        # Determine the alternate site domain for rewriting links
+        self.alt_site_domain: str = alt_site_domain if alt_site_domain else f"{self.writer_name}.lainnetwork.io"
         md_save_dir: str = f"{md_save_dir}/{self.writer_name}"
 
         self.md_save_dir: str = md_save_dir
@@ -174,7 +180,10 @@ class BaseSubstackScraper(ABC):
         """
         This method converts Markdown to HTML
         """
-        return markdown.markdown(md_content, extensions=['extra'])
+        return markdown.markdown(
+            md_content,
+            extensions=['extra', 'markdown.extensions.footnotes']
+        )
 
 
     def save_to_html_file(self, filepath: str, content: str) -> None:
@@ -208,6 +217,45 @@ class BaseSubstackScraper(ABC):
             </body>
             </html>
         """
+
+        # --- begin link rewriting for alternate site ---
+        original_domain = self.base_substack_url.rstrip('/')
+        # Convert all /p/ post links to local HTML files with .html extension
+        post_pattern = rf'{re.escape(original_domain)}/p/([^"#]+)'
+        replacement = fr'https://{self.alt_site_domain}/html/{self.writer_name}/\1.html'
+        html_content = re.sub(post_pattern, replacement, html_content)
+        # Also rewrite any remaining links to the base domain (e.g., index page)
+        html_content = html_content.replace(original_domain, f'https://{self.alt_site_domain}/html/{self.writer_name}')
+        # Rewrite only non-anchored footnote refs to match definition IDs
+        html_content = re.sub(
+            r'href="([^"]+)#footnote-(?!anchor-)([^"]+)"',
+            lambda m: f'href="{m.group(1)}#footnote-anchor-{m.group(2)}"',
+            html_content
+        )
+        # Normalize footnote reference URLs to in-page fragments
+        html_content = re.sub(
+            r'href="[^"]+\.html#(fn:\d+)"',
+            r'href="#\1"',
+            html_content
+        )
+        html_content = re.sub(
+            r'href="[^"]+\.html#(fnref:\d+)"',
+            r'href="#\1"',
+            html_content
+        )
+        # Strip full URLs from all in-page fragment links
+        html_content = re.sub(
+            r'href="https?://[^"]+\.html(#footnote-anchor-[^"]+)"',
+            r'href="\1"',
+            html_content
+        )
+        # Ensure footnote definitions are valid targets: add id on the definition anchor
+        html_content = re.sub(
+            r'<p><a href="#(footnote-anchor-[^"]+)">(\d+)</a></p>',
+            r'<p id="\1"><a href="#\1">\2</a></p>',
+            html_content
+        )
+        # --- end link rewriting for alternate site ---
 
         with open(filepath, 'w', encoding='utf-8') as file:
             file.write(html_content)
@@ -362,8 +410,8 @@ class BaseSubstackScraper(ABC):
 
 
 class SubstackScraper(BaseSubstackScraper):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
-        super().__init__(base_substack_url, md_save_dir, html_save_dir)
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, alt_site_domain: Optional[str] = None):
+        super().__init__(base_substack_url, md_save_dir, html_save_dir, alt_site_domain)
 
     def get_url_soup(self, url: str) -> Optional[BeautifulSoup]:
         """
@@ -389,9 +437,10 @@ class PremiumSubstackScraper(BaseSubstackScraper):
             headless: bool = False,
             edge_path: str = '',
             edge_driver_path: str = '',
-            user_agent: str = ''
+            user_agent: str = '',
+            alt_site_domain: Optional[str] = None
     ) -> None:
-        super().__init__(base_substack_url, md_save_dir, html_save_dir)
+        super().__init__(base_substack_url, md_save_dir, html_save_dir, alt_site_domain)
 
         options = EdgeOptions()
         if headless:
@@ -509,6 +558,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="The directory to save scraped posts as HTML files.",
     )
+    parser.add_argument(
+        "--alt-domain",
+        type=str,
+        default=None,
+        help="Alternate site domain for rewriting links (e.g. astralcodexten.example.net)."
+    )
 
     return parser.parse_args()
 
@@ -526,17 +581,21 @@ def main():
         if args.premium:
             scraper = PremiumSubstackScraper(
                 args.url,
-                headless=args.headless,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                headless=args.headless,
+                edge_path=args.edge_path,
+                edge_driver_path=args.edge_driver_path,
+                user_agent=args.user_agent,
+                alt_site_domain=args.alt_domain
             )
         else:
             scraper = SubstackScraper(
                 args.url,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                alt_site_domain=args.alt_domain
             )
-
     else:  # Use the hardcoded values at the top of the file
         if USE_PREMIUM:
             scraper = PremiumSubstackScraper(
@@ -544,18 +603,18 @@ def main():
                 md_save_dir=args.directory,
                 html_save_dir=args.html_directory,
                 edge_path=args.edge_path,
-                edge_driver_path=args.edge_driver_path
+                edge_driver_path=args.edge_driver_path,
+                alt_site_domain=ALT_SITE_DOMAIN
             )
         else:
             scraper = SubstackScraper(
                 base_substack_url=BASE_SUBSTACK_URL,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                alt_site_domain=ALT_SITE_DOMAIN
             )
-
-        scraper.scrape_posts(num_posts_to_scrape=args.number)
+    scraper.scrape_posts(num_posts_to_scrape=args.number)
 
 
 if __name__ == "__main__":
     main()
-
