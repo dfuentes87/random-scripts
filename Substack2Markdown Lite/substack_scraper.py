@@ -155,7 +155,15 @@ class BaseSubstackScraper(ABC):
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
-        return h.handle(html_content)
+        md = h.handle(html_content)
+
+        # Simplify image substitution by replacing all Substack image wrapper patterns with raw S3 links
+        md = re.sub(
+            r'\[!\[([^\]]+?)\]\(https://substackcdn\.com/image/fetch/[^\)]+/https%3A%2F%2F(substack-post-media\.s3\.amazonaws\.com%2F[^\)]+)\)\]\([^\)]+\)',
+            lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
+            md
+        )
+        return md
 
     @staticmethod
     def save_to_file(filepath: str, content: str) -> None:
