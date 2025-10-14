@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 from time import sleep
 
 from bs4 import BeautifulSoup
+from html import escape
 import html2text
 import markdown
 import requests
@@ -163,6 +164,10 @@ class BaseSubstackScraper(ABC):
             lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
             md
         )
+        # Normalize emphasis markers to asterisks so downstream Markdown->HTML conversion does not leak underscores.
+        md = re.sub(r'(?<!\\)___(.*?)(?<!\\)___', r'***\1***', md, flags=re.DOTALL)
+        md = re.sub(r'(?<!\\)__(.*?)(?<!\\)__', r'**\1**', md, flags=re.DOTALL)
+        md = re.sub(r'(?<!\\)_(.*?)(?<!\\)_', r'*\1*', md, flags=re.DOTALL)
         return md
 
     @staticmethod
@@ -194,9 +199,9 @@ class BaseSubstackScraper(ABC):
         )
 
 
-    def save_to_html_file(self, filepath: str, content: str) -> None:
+    def save_to_html_file(self, filepath: str, content: str, page_title: str) -> None:
         """
-        This method saves HTML content to a file with a link to an external CSS file.
+        Save HTML content to a file with a link to an external CSS file and a contextual document title.
         """
         if not isinstance(filepath, str):
             raise ValueError("filepath must be a string")
@@ -204,10 +209,15 @@ class BaseSubstackScraper(ABC):
         if not isinstance(content, str):
             raise ValueError("content must be a string")
 
+        if not isinstance(page_title, str):
+            raise ValueError("page_title must be a string")
+
         # Calculate the relative path from the HTML file to the CSS file
         html_dir = os.path.dirname(filepath)
         css_path = os.path.relpath("./assets/css/essay-styles.css", html_dir)
         css_path = css_path.replace("\\", "/")  # Ensure forward slashes for web paths
+
+        title_text = escape(page_title.strip()) or "Markdown Content"
 
         html_content = f"""
             <!DOCTYPE html>
@@ -215,7 +225,7 @@ class BaseSubstackScraper(ABC):
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Markdown Content</title>
+                <title>{title_text}</title>
                 <link rel="stylesheet" href="{css_path}">
             </head>
             <body>
@@ -396,7 +406,7 @@ class BaseSubstackScraper(ABC):
 
                     # Convert markdown to HTML and save
                     html_content = self.md_to_html(md)
-                    self.save_to_html_file(html_filepath, html_content)
+                    self.save_to_html_file(html_filepath, html_content, title)
 
                     essays_data.append({
                         "title": title,
