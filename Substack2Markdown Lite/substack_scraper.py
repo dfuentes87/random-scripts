@@ -28,7 +28,7 @@ BASE_MD_DIR: str = "md"  # Name of the directory we'll save the .md essay files
 BASE_HTML_DIR: str = "html"  # Name of the directory we'll save the .html essay files
 HTML_TEMPLATE: str = "author_template.html"  # HTML template to use for the author page
 JSON_DATA_DIR: str = "data"
-ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.lainnetwork.io"  # set to a custom domain like "astralcodexten.example.net"
+ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.example.com"  # set to a custom domain
 
 
 def extract_main_part(url: str) -> str:
