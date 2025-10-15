@@ -1,0 +1,8 @@
+.venv
+substack-venv
+.DS_*
+__pycache__
+
+**/html/*
+**/data/*
+**/md/*
