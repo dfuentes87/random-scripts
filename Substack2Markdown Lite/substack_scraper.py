@@ -12,7 +12,7 @@ import markdown
 import requests
 from tqdm import tqdm
 from xml.etree import ElementTree as ET
-import re  # for regex-based link rewriting
+import re
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
