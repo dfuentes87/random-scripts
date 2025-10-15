@@ -22,8 +22,6 @@ from selenium.webdriver.chrome.service import Service
 from urllib.parse import urlparse
 from config import EMAIL, PASSWORD
 
-from typing import Optional  # ensure Optional is imported
-
 USE_PREMIUM: bool = False  # Set to True if you want to login to Substack and convert paid for posts
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"  # Substack you want to convert to markdown
 BASE_MD_DIR: str = "md"  # Name of the directory we'll save the .md essay files
