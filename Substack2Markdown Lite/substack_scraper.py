@@ -164,6 +164,9 @@ class BaseSubstackScraper(ABC):
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
+        h.emphasis_mark = "*"
+        h.strong_mark = "**"
+        h.strong_emphasis_mark = "***"
         md = h.handle(processed_html)
 
         # Simplify image substitution by replacing all Substack image wrapper patterns with raw S3 links
@@ -174,11 +177,6 @@ class BaseSubstackScraper(ABC):
         )
         for placeholder, iframe_html in iframe_placeholders.items():
             md = md.replace(placeholder, f"\n\n{iframe_html}\n\n")
-
-        # Normalize emphasis markers to asterisks so downstream Markdown->HTML conversion does not leak underscores.
-        md = re.sub(r'(?<!\\)(?<!\w)___(.+?)___(?!\w)', r'***\1***', md, flags=re.DOTALL)
-        md = re.sub(r'(?<!\\)(?<!\w)__(.+?)__(?!\w)', r'**\1**', md, flags=re.DOTALL)
-        md = re.sub(r'(?<!\\)(?<!\w)_(.+?)_(?!\w)', r'*\1*', md, flags=re.DOTALL)
         return md
 
     @staticmethod
