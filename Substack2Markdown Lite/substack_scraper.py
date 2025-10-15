@@ -2,16 +2,17 @@ import argparse
 import json
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from time import sleep
 
 from bs4 import BeautifulSoup
+from html import escape
 import html2text
 import markdown
 import requests
 from tqdm import tqdm
 from xml.etree import ElementTree as ET
-import re  # for regex-based link rewriting
+import re
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -21,15 +22,13 @@ from selenium.webdriver.chrome.service import Service
 from urllib.parse import urlparse
 from config import EMAIL, PASSWORD
 
-from typing import Optional  # ensure Optional is imported
-
 USE_PREMIUM: bool = False  # Set to True if you want to login to Substack and convert paid for posts
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"  # Substack you want to convert to markdown
 BASE_MD_DIR: str = "md"  # Name of the directory we'll save the .md essay files
 BASE_HTML_DIR: str = "html"  # Name of the directory we'll save the .html essay files
 HTML_TEMPLATE: str = "author_template.html"  # HTML template to use for the author page
 JSON_DATA_DIR: str = "data"
-ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.lainnetwork.io"  # set to a custom domain like "astralcodexten.example.net"
+ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.example.com"  # set to a custom domain
 
 
 def extract_main_part(url: str) -> str:
@@ -152,10 +151,33 @@ class BaseSubstackScraper(ABC):
         """
         if not isinstance(html_content, str):
             raise ValueError("html_content must be a string")
+
+        soup = BeautifulSoup(html_content, "html.parser")
+        iframe_placeholders: Dict[str, str] = {}
+        for idx, iframe in enumerate(soup.find_all("iframe")):
+            placeholder = f"IFRAMEPLACEHOLDER{idx}"
+            iframe_placeholders[placeholder] = str(iframe)
+            iframe.replace_with(placeholder)
+
+        processed_html = ''.join(str(child) for child in soup.contents) if soup.contents else html_content
+
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
-        return h.handle(html_content)
+        h.emphasis_mark = "*"
+        h.strong_mark = "**"
+        h.strong_emphasis_mark = "***"
+        md = h.handle(processed_html)
+
+        # Simplify image substitution by replacing all Substack image wrapper patterns with raw S3 links
+        md = re.sub(
+            r'\[!\[([^\]]+?)\]\(https://substackcdn\.com/image/fetch/[^\)]+/https%3A%2F%2F(substack-post-media\.s3\.amazonaws\.com%2F[^\)]+)\)\]\([^\)]+\)',
+            lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
+            md
+        )
+        for placeholder, iframe_html in iframe_placeholders.items():
+            md = md.replace(placeholder, f"\n\n{iframe_html}\n\n")
+        return md
 
     @staticmethod
     def save_to_file(filepath: str, content: str) -> None:
@@ -186,9 +208,9 @@ class BaseSubstackScraper(ABC):
         )
 
 
-    def save_to_html_file(self, filepath: str, content: str) -> None:
+    def save_to_html_file(self, filepath: str, content: str, page_title: str) -> None:
         """
-        This method saves HTML content to a file with a link to an external CSS file.
+        Save HTML content to a file with a link to an external CSS file and a contextual document title.
         """
         if not isinstance(filepath, str):
             raise ValueError("filepath must be a string")
@@ -196,10 +218,38 @@ class BaseSubstackScraper(ABC):
         if not isinstance(content, str):
             raise ValueError("content must be a string")
 
+        if not isinstance(page_title, str):
+            raise ValueError("page_title must be a string")
+
+        content_soup = BeautifulSoup(content, "html.parser")
+        for iframe in content_soup.find_all("iframe"):
+            existing_style = iframe.get("style", "").strip()
+            style_suffix = "display:block;margin:0 auto;max-width:100%;border:0;"
+            if existing_style:
+                if not existing_style.endswith(";"):
+                    existing_style += ";"
+                iframe["style"] = f"{existing_style}{style_suffix}"
+            else:
+                iframe["style"] = style_suffix
+            if not iframe.get("loading"):
+                iframe["loading"] = "lazy"
+            wrapper = content_soup.new_tag(
+                "div",
+                attrs={
+                    "class": "embedded-video",
+                    "style": "display:flex;justify-content:center;margin:2rem auto;"
+                }
+            )
+            iframe.wrap(wrapper)
+
+        content = str(content_soup)
+
         # Calculate the relative path from the HTML file to the CSS file
         html_dir = os.path.dirname(filepath)
         css_path = os.path.relpath("./assets/css/essay-styles.css", html_dir)
         css_path = css_path.replace("\\", "/")  # Ensure forward slashes for web paths
+
+        title_text = escape(page_title.strip()) or "Markdown Content"
 
         html_content = f"""
             <!DOCTYPE html>
@@ -207,7 +257,7 @@ class BaseSubstackScraper(ABC):
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Markdown Content</title>
+                <title>{title_text}</title>
                 <link rel="stylesheet" href="{css_path}">
             </head>
             <body>
@@ -388,7 +438,7 @@ class BaseSubstackScraper(ABC):
 
                     # Convert markdown to HTML and save
                     html_content = self.md_to_html(md)
-                    self.save_to_html_file(html_filepath, html_content)
+                    self.save_to_html_file(html_filepath, html_content, title)
 
                     essays_data.append({
                         "title": title,
