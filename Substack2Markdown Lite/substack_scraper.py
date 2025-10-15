@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from time import sleep
 
 from bs4 import BeautifulSoup
@@ -153,10 +153,20 @@ class BaseSubstackScraper(ABC):
         """
         if not isinstance(html_content, str):
             raise ValueError("html_content must be a string")
+
+        soup = BeautifulSoup(html_content, "html.parser")
+        iframe_placeholders: Dict[str, str] = {}
+        for idx, iframe in enumerate(soup.find_all("iframe")):
+            placeholder = f"IFRAMEPLACEHOLDER{idx}"
+            iframe_placeholders[placeholder] = str(iframe)
+            iframe.replace_with(placeholder)
+
+        processed_html = ''.join(str(child) for child in soup.contents) if soup.contents else html_content
+
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
-        md = h.handle(html_content)
+        md = h.handle(processed_html)
 
         # Simplify image substitution by replacing all Substack image wrapper patterns with raw S3 links
         md = re.sub(
@@ -164,10 +174,13 @@ class BaseSubstackScraper(ABC):
             lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
             md
         )
+        for placeholder, iframe_html in iframe_placeholders.items():
+            md = md.replace(placeholder, f"\n\n{iframe_html}\n\n")
+
         # Normalize emphasis markers to asterisks so downstream Markdown->HTML conversion does not leak underscores.
-        md = re.sub(r'(?<!\\)___(.*?)(?<!\\)___', r'***\1***', md, flags=re.DOTALL)
-        md = re.sub(r'(?<!\\)__(.*?)(?<!\\)__', r'**\1**', md, flags=re.DOTALL)
-        md = re.sub(r'(?<!\\)_(.*?)(?<!\\)_', r'*\1*', md, flags=re.DOTALL)
+        md = re.sub(r'(?<!\\)(?<!\w)___(.+?)___(?!\w)', r'***\1***', md, flags=re.DOTALL)
+        md = re.sub(r'(?<!\\)(?<!\w)__(.+?)__(?!\w)', r'**\1**', md, flags=re.DOTALL)
+        md = re.sub(r'(?<!\\)(?<!\w)_(.+?)_(?!\w)', r'*\1*', md, flags=re.DOTALL)
         return md
 
     @staticmethod
@@ -211,6 +224,29 @@ class BaseSubstackScraper(ABC):
 
         if not isinstance(page_title, str):
             raise ValueError("page_title must be a string")
+
+        content_soup = BeautifulSoup(content, "html.parser")
+        for iframe in content_soup.find_all("iframe"):
+            existing_style = iframe.get("style", "").strip()
+            style_suffix = "display:block;margin:0 auto;max-width:100%;border:0;"
+            if existing_style:
+                if not existing_style.endswith(";"):
+                    existing_style += ";"
+                iframe["style"] = f"{existing_style}{style_suffix}"
+            else:
+                iframe["style"] = style_suffix
+            if not iframe.get("loading"):
+                iframe["loading"] = "lazy"
+            wrapper = content_soup.new_tag(
+                "div",
+                attrs={
+                    "class": "embedded-video",
+                    "style": "display:flex;justify-content:center;margin:2rem auto;"
+                }
+            )
+            iframe.wrap(wrapper)
+
+        content = str(content_soup)
 
         # Calculate the relative path from the HTML file to the CSS file
         html_dir = os.path.dirname(filepath)
