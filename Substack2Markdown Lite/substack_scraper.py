@@ -254,7 +254,11 @@ class BaseSubstackScraper(ABC):
         # Ensure a space between bold text and an inline link within the same strong tag.
         content = re.sub(r'(<strong>[^<]*\S)<a', r'\1 <a', content)
         # Ensure a space between a closing strong tag and a following link.
-        content = re.sub(r'(</strong>)<a', r'\1 <a', content)
+        content = re.sub(r'(?<!\s)</strong><a', r'</strong> <a', content)
+        # Ensure a space after a colon inside emphasis when followed by a link.
+        content = re.sub(r'(<em>[^<]*:\s?)<a', r'\1 <a', content)
+        # Remove extra space before a colon wrapped in a strong tag (e.g., "writes :").
+        content = re.sub(r'(\S)\s+(<strong>:\s*</strong>)', r'\1\2', content)
         # Strip stray markdown bold markers left before/after emphasis tags.
         content = re.sub(r'\*\*(?=\s*<em>)', '', content)
         content = re.sub(r'(?<=</em>)\s*\*\*', '', content)
@@ -288,12 +292,16 @@ class BaseSubstackScraper(ABC):
 
         # --- begin link rewriting for alternate site ---
         original_domain = self.base_substack_url.rstrip('/')
-        # Convert all /p/ post links to local HTML files with .html extension
-        post_pattern = rf'{re.escape(original_domain)}/p/([^"#]+)'
+        # Convert /p/ post links to local HTML files with .html extension, except comment links.
+        post_pattern = rf'{re.escape(original_domain)}/p/(?![^"#]*?/comment/)([^"#]+)'
         replacement = fr'https://{self.alt_site_domain}/html/{self.writer_name}/\1.html'
         html_content = re.sub(post_pattern, replacement, html_content)
-        # Also rewrite any remaining links to the base domain (e.g., index page)
-        html_content = html_content.replace(original_domain, f'https://{self.alt_site_domain}/html/{self.writer_name}')
+        # Also rewrite any remaining links to the base domain (e.g., index page), except comment links.
+        html_content = re.sub(
+            rf'{re.escape(original_domain)}(?!/p/[^"#]*?/comment/)',
+            f'https://{self.alt_site_domain}/html/{self.writer_name}',
+            html_content
+        )
         # Rewrite only non-anchored footnote refs to match definition IDs
         html_content = re.sub(
             r'href="([^"]+)#footnote-(?!anchor-)([^"]+)"',
