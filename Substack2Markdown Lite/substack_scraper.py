@@ -153,6 +153,10 @@ class BaseSubstackScraper(ABC):
             raise ValueError("html_content must be a string")
 
         soup = BeautifulSoup(html_content, "html.parser")
+        # Remove bold tags that contain only whitespace to avoid stray markdown markers.
+        for strong in soup.find_all("strong"):
+            if not strong.get_text(strip=True):
+                strong.replace_with(strong.get_text())
         iframe_placeholders: Dict[str, str] = {}
         for idx, iframe in enumerate(soup.find_all("iframe")):
             placeholder = f"IFRAMEPLACEHOLDER{idx}"
@@ -175,6 +179,8 @@ class BaseSubstackScraper(ABC):
             lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
             md
         )
+        # Prevent numbered paragraphs like "#1 ..." from being parsed as headings.
+        md = re.sub(r'(?m)^([ \t>]*?)#(?=\d)', r'\1\\#', md)
         for placeholder, iframe_html in iframe_placeholders.items():
             md = md.replace(placeholder, f"\n\n{iframe_html}\n\n")
         return md
@@ -243,6 +249,22 @@ class BaseSubstackScraper(ABC):
             iframe.wrap(wrapper)
 
         content = str(content_soup)
+        # Ensure a space between numbered strong prefixes and following links.
+        content = re.sub(r'(<strong>\s*\d+\s*:</strong>)<a', r'\1 <a', content)
+        # Ensure a space between bold text and an inline link within the same strong tag.
+        content = re.sub(r'(<strong>[^<]*\S)<a', r'\1 <a', content)
+        # Ensure a space between a closing strong tag and a following link.
+        content = re.sub(r'(?<!\s)</strong><a', r'</strong> <a', content)
+        # Ensure a space after a colon inside emphasis when followed by a link.
+        content = re.sub(r'(<em>[^<]*:\s?)<a', r'\1 <a', content)
+        # Remove extra space before a colon wrapped in a strong tag (e.g., "writes :").
+        content = re.sub(r'(\S)\s+(<strong>:\s*</strong>)', r'\1\2', content)
+        # Strip stray markdown bold markers left before/after emphasis tags.
+        content = re.sub(r'\*\*(?=\s*<em>)', '', content)
+        content = re.sub(r'(?<=</em>)\s*\*\*', '', content)
+        # Collapse redundant nested emphasis tags.
+        content = re.sub(r'<em>\s*<em>', '<em>', content)
+        content = re.sub(r'</em>\s*</em>', '</em>', content)
 
         # Calculate the relative path from the HTML file to the CSS file
         html_dir = os.path.dirname(filepath)
@@ -270,12 +292,16 @@ class BaseSubstackScraper(ABC):
 
         # --- begin link rewriting for alternate site ---
         original_domain = self.base_substack_url.rstrip('/')
-        # Convert all /p/ post links to local HTML files with .html extension
-        post_pattern = rf'{re.escape(original_domain)}/p/([^"#]+)'
+        # Convert /p/ post links to local HTML files with .html extension, except comment links.
+        post_pattern = rf'{re.escape(original_domain)}/p/(?![^"#]*?/comment/)([^"#]+)'
         replacement = fr'https://{self.alt_site_domain}/html/{self.writer_name}/\1.html'
         html_content = re.sub(post_pattern, replacement, html_content)
-        # Also rewrite any remaining links to the base domain (e.g., index page)
-        html_content = html_content.replace(original_domain, f'https://{self.alt_site_domain}/html/{self.writer_name}')
+        # Also rewrite any remaining links to the base domain (e.g., index page), except comment links.
+        html_content = re.sub(
+            rf'{re.escape(original_domain)}(?!/p/[^"#]*?/comment/)',
+            f'https://{self.alt_site_domain}/html/{self.writer_name}',
+            html_content
+        )
         # Rewrite only non-anchored footnote refs to match definition IDs
         html_content = re.sub(
             r'href="([^"]+)#footnote-(?!anchor-)([^"]+)"',
