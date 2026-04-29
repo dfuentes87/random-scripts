@@ -1,8 +1,8 @@
-﻿# Substack2Markdown Lite
+﻿# Substack2Markdown
 
-Substack2Markdown Lite is a Python tool for downloading free and premium Substack posts and saving them as both Markdown and HTML files, and includes a simple HTML interface to browse and sort through the posts. It will save paid for content as long as you're subscribed to that substack.
+Substack2Markdown is a Python tool for downloading free and premium Substack posts and saving them as both Markdown and HTML files, and includes a simple HTML interface to browse and sort through the posts. It will save paid for content as long as you're subscribed to that substack.
 
-![Substack2Markdown Lite Interface](./assets/images/screenshot.png)
+![Substack2Markdown Interface](./assets/images/screenshot.png)
 
 Once you run the script, it will create a folder named after the substack in `/md`,
 and then begin to scrape the substack URL, converting the blog posts into markdown files. Once all the posts have been
@@ -24,18 +24,16 @@ Clone the repo and install the dependencies:
 git clone https://github.com/yourusername/substack_scraper.git
 cd substack_scraper
 
-# # Optionally create a virtual environment
-# uv venv substack
-# # Activate the virtual environment
-# .\venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux
-
-uv pip install -r requirements.txt
+# Optionally create a virtual environment
+uv venv substack
+# Activate the virtual environment
+.\venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/macOS
 ```
 
 For the premium scraper, update the `config.py` in the root directory with your Substack email and password:
 
-```python
+```plaintext
 EMAIL = "your-email@domain.com"
 PASSWORD = "your-password"
 ```
@@ -70,4 +68,4 @@ python substack_scraper.py --url https://example.substack.com --directory /path/
 
 ## Contributing
 
-Hard fork from [https://github.com/timf34/Substack2Markdown](https://github.com/timf34/Substack2Markdown)
+Hard fork from [Substack2Markdown](https://github.com/timf34/Substack2Markdown)
