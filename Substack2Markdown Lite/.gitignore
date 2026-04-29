@@ -1,0 +1,4 @@
+# Ignore all custom scrape files
+data/*
+html/*
+md/*
