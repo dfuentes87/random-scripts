@@ -1,40 +1,42 @@
 import argparse
 import json
 import os
+import re
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from time import sleep
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
-from html import escape
 import html2text
 import markdown
 import requests
 from tqdm import tqdm
 from xml.etree import ElementTree as ET
-import re
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.chrome.service import Service
-from urllib.parse import urlparse
 from config import EMAIL, PASSWORD
 
-USE_PREMIUM: bool = False  # Set to True if you want to login to Substack and convert paid for posts
-BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"  # Substack you want to convert to markdown
-BASE_MD_DIR: str = "md"  # Name of the directory we'll save the .md essay files
-BASE_HTML_DIR: str = "html"  # Name of the directory we'll save the .html essay files
-HTML_TEMPLATE: str = "author_template.html"  # HTML template to use for the author page
+USE_PREMIUM: bool = False
+BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"
+
+### DO NOT EDIT BELOW THIS LINE ###
+
+BASE_MD_DIR: str = "md"
+BASE_HTML_DIR: str = "html"
+HTML_TEMPLATE: str = "author_template.html"
 JSON_DATA_DIR: str = "data"
-ALT_SITE_DOMAIN: Optional[str] = "astralcodexten.example.com"  # set to a custom domain
+X_DOMAIN_PATTERN = re.compile(r'https?://(?:www\.)?x\.com(?=[/?#\s]|$)')
+STRAY_MARKDOWN_DELIMITER_PATTERN = re.compile(r'(?<=\S)\s+(?:\*\*|__)\s+(?=\S)')
 
 
 def extract_main_part(url: str) -> str:
-    parts = urlparse(url).netloc.split('.')  # Parse the URL to get the netloc, and split on '.'
-    return parts[1] if parts[0] == 'www' else parts[0]  # Return the main part of the domain, while ignoring 'www' if
-    # present
+    parts = urlparse(url).netloc.split('.')
+    return parts[1] if parts[0] == 'www' else parts[0]
 
 
 def generate_html_file(author_name: str) -> None:
@@ -44,39 +46,34 @@ def generate_html_file(author_name: str) -> None:
     if not os.path.exists(BASE_HTML_DIR):
         os.makedirs(BASE_HTML_DIR)
 
-    # Read JSON data
     json_path = os.path.join(JSON_DATA_DIR, f'{author_name}.json')
     with open(json_path, 'r', encoding='utf-8') as file:
         essays_data = json.load(file)
 
-    # Convert JSON data to a JSON string for embedding
     embedded_json_data = json.dumps(essays_data, ensure_ascii=False, indent=4)
 
     with open(HTML_TEMPLATE, 'r', encoding='utf-8') as file:
         html_template = file.read()
 
-    # Insert the JSON string into the script tag in the HTML template
     html_with_data = html_template.replace('<!-- AUTHOR_NAME -->', author_name).replace(
         '<script type="application/json" id="essaysData"></script>',
         f'<script type="application/json" id="essaysData">{embedded_json_data}</script>'
     )
     html_with_author = html_with_data.replace('author_name', author_name)
 
-    # Write the modified HTML to a new file
     html_output_path = os.path.join(BASE_HTML_DIR, f'{author_name}.html')
     with open(html_output_path, 'w', encoding='utf-8') as file:
         file.write(html_with_author)
 
 
 class BaseSubstackScraper(ABC):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, alt_site_domain: Optional[str] = None):
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
         if not base_substack_url.endswith("/"):
             base_substack_url += "/"
         self.base_substack_url: str = base_substack_url
+        self.blog_host = self.normalize_hostname(base_substack_url)
 
         self.writer_name: str = extract_main_part(base_substack_url)
-        # Determine the alternate site domain for rewriting links
-        self.alt_site_domain: str = alt_site_domain if alt_site_domain else f"{self.writer_name}.lainnetwork.io"
         md_save_dir: str = f"{md_save_dir}/{self.writer_name}"
 
         self.md_save_dir: str = md_save_dir
@@ -91,6 +88,10 @@ class BaseSubstackScraper(ABC):
 
         self.keywords: List[str] = ["about", "archive", "podcast"]
         self.post_urls: List[str] = self.get_all_post_urls()
+        self.post_url_map = {
+            self.normalize_post_url(url): self.get_filename_from_url(url, filetype=".html")
+            for url in self.post_urls
+        }
 
     def get_all_post_urls(self) -> List[str]:
         """
@@ -151,39 +152,108 @@ class BaseSubstackScraper(ABC):
         """
         if not isinstance(html_content, str):
             raise ValueError("html_content must be a string")
-
-        soup = BeautifulSoup(html_content, "html.parser")
-        # Remove bold tags that contain only whitespace to avoid stray markdown markers.
-        for strong in soup.find_all("strong"):
-            if not strong.get_text(strip=True):
-                strong.replace_with(strong.get_text())
-        iframe_placeholders: Dict[str, str] = {}
-        for idx, iframe in enumerate(soup.find_all("iframe")):
-            placeholder = f"IFRAMEPLACEHOLDER{idx}"
-            iframe_placeholders[placeholder] = str(iframe)
-            iframe.replace_with(placeholder)
-
-        processed_html = ''.join(str(child) for child in soup.contents) if soup.contents else html_content
-
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
-        h.emphasis_mark = "*"
-        h.strong_mark = "**"
-        h.strong_emphasis_mark = "***"
-        md = h.handle(processed_html)
+        md_content = h.handle(html_content)
+        return BaseSubstackScraper.normalize_markdown_content(md_content)
 
-        # Simplify image substitution by replacing all Substack image wrapper patterns with raw S3 links
-        md = re.sub(
-            r'\[!\[([^\]]+?)\]\(https://substackcdn\.com/image/fetch/[^\)]+/https%3A%2F%2F(substack-post-media\.s3\.amazonaws\.com%2F[^\)]+)\)\]\([^\)]+\)',
-            lambda m: f'![{m.group(1).replace(chr(10), " ")}](https://{m.group(2).replace("%2F", "/")})',
-            md
-        )
-        # Prevent numbered paragraphs like "#1 ..." from being parsed as headings.
-        md = re.sub(r'(?m)^([ \t>]*?)#(?=\d)', r'\1\\#', md)
-        for placeholder, iframe_html in iframe_placeholders.items():
-            md = md.replace(placeholder, f"\n\n{iframe_html}\n\n")
-        return md
+    @staticmethod
+    def normalize_markdown_content(md_content: str) -> str:
+        """
+        Applies post-processing fixes to markdown emitted by html2text.
+        """
+        if not isinstance(md_content, str):
+            raise ValueError("md_content must be a string")
+
+        md_content = STRAY_MARKDOWN_DELIMITER_PATTERN.sub(' ', md_content)
+        return X_DOMAIN_PATTERN.sub('https://xcancel.com', md_content)
+
+    @staticmethod
+    def normalize_hostname(url: str) -> str:
+        hostname = urlparse(url).netloc.lower()
+        return hostname[4:] if hostname.startswith("www.") else hostname
+
+    @staticmethod
+    def normalize_post_url(url: str) -> str:
+        parsed = urlparse(url)
+        normalized_path = parsed.path.rstrip("/") or "/"
+        return urlunparse((
+            parsed.scheme.lower(),
+            BaseSubstackScraper.normalize_hostname(url),
+            normalized_path,
+            "",
+            "",
+            "",
+        ))
+
+    def get_local_html_path(self, filename: str) -> str:
+        return os.path.join(self.html_save_dir, filename)
+
+    def get_existing_local_html_filename(self, url: str) -> Optional[str]:
+        filename = self.post_url_map.get(self.normalize_post_url(url))
+        if filename and os.path.exists(self.get_local_html_path(filename)):
+            return filename
+        return None
+
+    def resolve_same_blog_link(self, href: str, source_url: str) -> Optional[str]:
+        if not href or href.startswith("#"):
+            return None
+
+        parsed_href = urlparse(href)
+        if parsed_href.scheme in {"mailto", "javascript", "tel"}:
+            return None
+
+        resolved_url = urljoin(source_url, href)
+        resolved_parsed = urlparse(resolved_url)
+        if self.normalize_hostname(resolved_url) != self.blog_host:
+            return None
+
+        fragment = f"#{resolved_parsed.fragment}" if resolved_parsed.fragment else ""
+        local_filename = self.get_existing_local_html_filename(resolved_url)
+        if local_filename:
+            return f"{local_filename}{fragment}"
+
+        return resolved_url
+
+    def rewrite_source_links(self, content_node: BeautifulSoup, source_url: str) -> None:
+        for link in content_node.select("a[href]"):
+            rewritten_href = self.resolve_same_blog_link(link["href"], source_url)
+            if rewritten_href:
+                link["href"] = rewritten_href
+
+    def rewrite_generated_html_links(self, html_content: str) -> str:
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        for link in soup.select("a[href]"):
+            href = link["href"]
+            parsed_href = urlparse(href)
+            if parsed_href.scheme not in {"http", "https"}:
+                continue
+
+            local_filename = self.get_existing_local_html_filename(href)
+            if local_filename:
+                fragment = f"#{parsed_href.fragment}" if parsed_href.fragment else ""
+                link["href"] = f"{local_filename}{fragment}"
+
+        return str(soup)
+
+    def refresh_existing_html_links(self) -> None:
+        if not os.path.exists(self.html_save_dir):
+            return
+
+        for filename in os.listdir(self.html_save_dir):
+            if not filename.endswith(".html"):
+                continue
+
+            filepath = self.get_local_html_path(filename)
+            with open(filepath, 'r', encoding='utf-8') as file:
+                html_content = file.read()
+
+            rewritten_content = self.rewrite_generated_html_links(html_content)
+            if rewritten_content != html_content:
+                with open(filepath, 'w', encoding='utf-8') as file:
+                    file.write(rewritten_content)
 
     @staticmethod
     def save_to_file(filepath: str, content: str) -> None:
@@ -208,15 +278,12 @@ class BaseSubstackScraper(ABC):
         """
         This method converts Markdown to HTML
         """
-        return markdown.markdown(
-            md_content,
-            extensions=['extra', 'markdown.extensions.footnotes']
-        )
+        return markdown.markdown(md_content, extensions=['extra'])
 
 
-    def save_to_html_file(self, filepath: str, content: str, page_title: str) -> None:
+    def save_to_html_file(self, filepath: str, content: str) -> None:
         """
-        Save HTML content to a file with a link to an external CSS file and a contextual document title.
+        This method saves HTML content to a file with a link to an external CSS file.
         """
         if not isinstance(filepath, str):
             raise ValueError("filepath must be a string")
@@ -224,54 +291,9 @@ class BaseSubstackScraper(ABC):
         if not isinstance(content, str):
             raise ValueError("content must be a string")
 
-        if not isinstance(page_title, str):
-            raise ValueError("page_title must be a string")
-
-        content_soup = BeautifulSoup(content, "html.parser")
-        for iframe in content_soup.find_all("iframe"):
-            existing_style = iframe.get("style", "").strip()
-            style_suffix = "display:block;margin:0 auto;max-width:100%;border:0;"
-            if existing_style:
-                if not existing_style.endswith(";"):
-                    existing_style += ";"
-                iframe["style"] = f"{existing_style}{style_suffix}"
-            else:
-                iframe["style"] = style_suffix
-            if not iframe.get("loading"):
-                iframe["loading"] = "lazy"
-            wrapper = content_soup.new_tag(
-                "div",
-                attrs={
-                    "class": "embedded-video",
-                    "style": "display:flex;justify-content:center;margin:2rem auto;"
-                }
-            )
-            iframe.wrap(wrapper)
-
-        content = str(content_soup)
-        # Ensure a space between numbered strong prefixes and following links.
-        content = re.sub(r'(<strong>\s*\d+\s*:</strong>)<a', r'\1 <a', content)
-        # Ensure a space between bold text and an inline link within the same strong tag.
-        content = re.sub(r'(<strong>[^<]*\S)<a', r'\1 <a', content)
-        # Ensure a space between a closing strong tag and a following link.
-        content = re.sub(r'(?<!\s)</strong><a', r'</strong> <a', content)
-        # Ensure a space after a colon inside emphasis when followed by a link.
-        content = re.sub(r'(<em>[^<]*:\s?)<a', r'\1 <a', content)
-        # Remove extra space before a colon wrapped in a strong tag (e.g., "writes :").
-        content = re.sub(r'(\S)\s+(<strong>:\s*</strong>)', r'\1\2', content)
-        # Strip stray markdown bold markers left before/after emphasis tags.
-        content = re.sub(r'\*\*(?=\s*<em>)', '', content)
-        content = re.sub(r'(?<=</em>)\s*\*\*', '', content)
-        # Collapse redundant nested emphasis tags.
-        content = re.sub(r'<em>\s*<em>', '<em>', content)
-        content = re.sub(r'</em>\s*</em>', '</em>', content)
-
-        # Calculate the relative path from the HTML file to the CSS file
         html_dir = os.path.dirname(filepath)
         css_path = os.path.relpath("./assets/css/essay-styles.css", html_dir)
-        css_path = css_path.replace("\\", "/")  # Ensure forward slashes for web paths
-
-        title_text = escape(page_title.strip()) or "Markdown Content"
+        css_path = css_path.replace("\\", "/")
 
         html_content = f"""
             <!DOCTYPE html>
@@ -279,7 +301,7 @@ class BaseSubstackScraper(ABC):
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>{title_text}</title>
+                <title>Markdown Content</title>
                 <link rel="stylesheet" href="{css_path}">
             </head>
             <body>
@@ -289,49 +311,6 @@ class BaseSubstackScraper(ABC):
             </body>
             </html>
         """
-
-        # --- begin link rewriting for alternate site ---
-        original_domain = self.base_substack_url.rstrip('/')
-        # Convert /p/ post links to local HTML files with .html extension, except comment links.
-        post_pattern = rf'{re.escape(original_domain)}/p/(?![^"#]*?/comment/)([^"#]+)'
-        replacement = fr'https://{self.alt_site_domain}/html/{self.writer_name}/\1.html'
-        html_content = re.sub(post_pattern, replacement, html_content)
-        # Also rewrite any remaining links to the base domain (e.g., index page), except comment links.
-        html_content = re.sub(
-            rf'{re.escape(original_domain)}(?!/p/[^"#]*?/comment/)',
-            f'https://{self.alt_site_domain}/html/{self.writer_name}',
-            html_content
-        )
-        # Rewrite only non-anchored footnote refs to match definition IDs
-        html_content = re.sub(
-            r'href="([^"]+)#footnote-(?!anchor-)([^"]+)"',
-            lambda m: f'href="{m.group(1)}#footnote-anchor-{m.group(2)}"',
-            html_content
-        )
-        # Normalize footnote reference URLs to in-page fragments
-        html_content = re.sub(
-            r'href="[^"]+\.html#(fn:\d+)"',
-            r'href="#\1"',
-            html_content
-        )
-        html_content = re.sub(
-            r'href="[^"]+\.html#(fnref:\d+)"',
-            r'href="#\1"',
-            html_content
-        )
-        # Strip full URLs from all in-page fragment links
-        html_content = re.sub(
-            r'href="https?://[^"]+\.html(#footnote-anchor-[^"]+)"',
-            r'href="\1"',
-            html_content
-        )
-        # Ensure footnote definitions are valid targets: add id on the definition anchor
-        html_content = re.sub(
-            r'<p><a href="#(footnote-anchor-[^"]+)">(\d+)</a></p>',
-            r'<p id="\1"><a href="#\1">\2</a></p>',
-            html_content
-        )
-        # --- end link rewriting for alternate site ---
 
         with open(filepath, 'w', encoding='utf-8') as file:
             file.write(html_content)
@@ -370,7 +349,7 @@ class BaseSubstackScraper(ABC):
 
         return metadata + content
 
-    def extract_post_data(self, soup: BeautifulSoup) -> Tuple[str, str, str, str, str]:
+    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> Tuple[str, str, str, str]:
         """
         Converts substack post soup to markdown, returns metadata and content
         """
@@ -390,20 +369,21 @@ class BaseSubstackScraper(ABC):
             except json.JSONDecodeError:
                 pass
 
-        # Then just rename date_published => date
         if "T" in date_published:
             date_published = date_published.split("T", 1)[0]
 
         date = date_published
 
-
-        title = soup.select_one("h1.post-title, h2").text.strip()  # When a video is present, the title is demoted to h2
+        title = soup.select_one("h1.post-title, h2").text.strip()
 
         subtitle_element = soup.select_one("h3.subtitle")
         subtitle = subtitle_element.text.strip() if subtitle_element else ""
 
-
-        content = str(soup.select_one("div.available-content"))
+        content_node = soup.select_one("div.available-content")
+        if content_node is None:
+            raise ValueError("Post content not found")
+        self.rewrite_source_links(content_node, source_url)
+        content = str(content_node)
         md = self.html_to_md(content)
         md_content = self.combine_metadata_and_content(title, subtitle, date, md)
         return title, subtitle, date, md_content
@@ -427,14 +407,11 @@ class BaseSubstackScraper(ABC):
         else:
             existing_data = []
 
-        # Build a dict keyed by file_link
         existing_dict = {item["url"]: item for item in existing_data if "url" in item}
 
-        # Insert or update each newly scraped post
         for new_item in essays_data:
             existing_dict[new_item["url"]] = new_item
 
-        # Write back without duplicates
         combined_data = list(existing_dict.values())
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(combined_data, f, ensure_ascii=False, indent=4)
@@ -459,12 +436,12 @@ class BaseSubstackScraper(ABC):
                     if soup is None:
                         total += 1
                         continue
-                    title, subtitle, date, md = self.extract_post_data(soup)
+                    title, subtitle, date, md = self.extract_post_data(soup, url)
                     self.save_to_file(md_filepath, md)
 
-                    # Convert markdown to HTML and save
                     html_content = self.md_to_html(md)
-                    self.save_to_html_file(html_filepath, html_content, title)
+                    html_content = self.rewrite_generated_html_links(html_content)
+                    self.save_to_html_file(html_filepath, html_content)
 
                     essays_data.append({
                         "title": title,
@@ -481,13 +458,14 @@ class BaseSubstackScraper(ABC):
             count += 1
             if num_posts_to_scrape != 0 and count == num_posts_to_scrape:
                 break
+        self.refresh_existing_html_links()
         self.save_essays_data_to_json(essays_data=essays_data)
         generate_html_file(author_name=self.writer_name)
 
 
 class SubstackScraper(BaseSubstackScraper):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, alt_site_domain: Optional[str] = None):
-        super().__init__(base_substack_url, md_save_dir, html_save_dir, alt_site_domain)
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
+        super().__init__(base_substack_url, md_save_dir, html_save_dir)
 
     def get_url_soup(self, url: str) -> Optional[BeautifulSoup]:
         """
@@ -513,10 +491,9 @@ class PremiumSubstackScraper(BaseSubstackScraper):
             headless: bool = False,
             edge_path: str = '',
             edge_driver_path: str = '',
-            user_agent: str = '',
-            alt_site_domain: Optional[str] = None
+            user_agent: str = ''
     ) -> None:
-        super().__init__(base_substack_url, md_save_dir, html_save_dir, alt_site_domain)
+        super().__init__(base_substack_url, md_save_dir, html_save_dir)
 
         options = EdgeOptions()
         if headless:
@@ -524,7 +501,7 @@ class PremiumSubstackScraper(BaseSubstackScraper):
         if edge_path:
             options.binary_location = edge_path
         if user_agent:
-            options.add_argument(f'user-agent={user_agent}')  # Pass this if running headless and blocked by captcha
+            options.add_argument(f'user-agent={user_agent}')
 
         if edge_driver_path:
             service = Service(executable_path=edge_driver_path)
@@ -547,16 +524,14 @@ class PremiumSubstackScraper(BaseSubstackScraper):
         signin_with_password.click()
         sleep(3)
 
-        # Email and password
         email = self.driver.find_element(By.NAME, "email")
         password = self.driver.find_element(By.NAME, "password")
         email.send_keys(EMAIL)
         password.send_keys(PASSWORD)
 
-        # Find the submit button and click it.
         submit = self.driver.find_element(By.XPATH, "//*[@id=\"substack-login\"]/div[2]/div[2]/form/button")
         submit.click()
-        sleep(30)  # Wait for the page to load
+        sleep(30)
 
         if self.is_login_failed():
             raise Exception(
@@ -634,12 +609,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="The directory to save scraped posts as HTML files.",
     )
-    parser.add_argument(
-        "--alt-domain",
-        type=str,
-        default=None,
-        help="Alternate site domain for rewriting links (e.g. astralcodexten.example.net)."
-    )
 
     return parser.parse_args()
 
@@ -657,38 +626,33 @@ def main():
         if args.premium:
             scraper = PremiumSubstackScraper(
                 args.url,
-                md_save_dir=args.directory,
-                html_save_dir=args.html_directory,
                 headless=args.headless,
-                edge_path=args.edge_path,
-                edge_driver_path=args.edge_driver_path,
-                user_agent=args.user_agent,
-                alt_site_domain=args.alt_domain
+                md_save_dir=args.directory,
+                html_save_dir=args.html_directory
             )
         else:
             scraper = SubstackScraper(
                 args.url,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory,
-                alt_site_domain=args.alt_domain
+                html_save_dir=args.html_directory
             )
-    else:  # Use the hardcoded values at the top of the file
+
+    else:
         if USE_PREMIUM:
             scraper = PremiumSubstackScraper(
                 base_substack_url=BASE_SUBSTACK_URL,
                 md_save_dir=args.directory,
                 html_save_dir=args.html_directory,
                 edge_path=args.edge_path,
-                edge_driver_path=args.edge_driver_path,
-                alt_site_domain=ALT_SITE_DOMAIN
+                edge_driver_path=args.edge_driver_path
             )
         else:
             scraper = SubstackScraper(
                 base_substack_url=BASE_SUBSTACK_URL,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory,
-                alt_site_domain=ALT_SITE_DOMAIN
+                html_save_dir=args.html_directory
             )
+
     scraper.scrape_posts(num_posts_to_scrape=args.number)
 
 
