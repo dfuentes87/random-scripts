@@ -1,0 +1,6 @@
+domain {
+  {{ freebsd_opensmptd_domain }} {
+    path = "{{ freebsd_opensmptd_dkim_key_path }}";
+    selector = "{{ freebsd_opensmptd_dkim_selector }}";
+  }
+}

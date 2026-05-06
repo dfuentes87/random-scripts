@@ -1,0 +1,79 @@
+---
+- name: Create OpenSMTPD mail users inside a FreeBSD jail
+  hosts: freebsd_mail_jails
+  become: true
+  vars:
+    freebsd_opensmptd_mail_passwd_path: /usr/local/etc/mail/passwd
+    freebsd_opensmptd_mail_virtuals_path: /usr/local/etc/mail/virtuals
+    freebsd_opensmptd_restart_mail_services: true
+
+    # Password hashes must be generated with `smtpctl encrypt` inside the jail.
+    freebsd_opensmptd_mail_users:
+      - address: user@example.net
+        password_hash: replace-with-smtpctl-encrypt-output
+
+    freebsd_opensmptd_virtuals:
+      - address: user@example.net
+        destination: vmail
+      - address: postmaster@example.net
+        destination: user@example.net
+
+  tasks:
+    - name: Ensure mail config directory exists
+      ansible.builtin.file:
+        path: "{{ freebsd_opensmptd_mail_passwd_path | dirname }}"
+        state: directory
+        owner: root
+        group: wheel
+        mode: "0755"
+
+    - name: Ensure mail account files exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: touch
+        owner: root
+        group: wheel
+        mode: "0640"
+        modification_time: preserve
+        access_time: preserve
+      loop:
+        - "{{ freebsd_opensmptd_mail_passwd_path }}"
+        - "{{ freebsd_opensmptd_mail_virtuals_path }}"
+
+    - name: Create OpenSMTPD/Dovecot passwd entries
+      ansible.builtin.lineinfile:
+        path: "{{ freebsd_opensmptd_mail_passwd_path }}"
+        regexp: "^{{ item.address | regex_escape }}:"
+        line: "{{ item.address }}:{{ item.password_hash }}::::::"
+        owner: root
+        group: wheel
+        mode: "0640"
+      loop: "{{ freebsd_opensmptd_mail_users }}"
+      no_log: true
+      notify:
+        - Restart smtpd
+        - Restart dovecot
+
+    - name: Create OpenSMTPD virtual mappings
+      ansible.builtin.lineinfile:
+        path: "{{ freebsd_opensmptd_mail_virtuals_path }}"
+        regexp: "^{{ item.address | regex_escape }}\\s+"
+        line: "{{ item.address }} {{ item.destination }}"
+        owner: root
+        group: wheel
+        mode: "0640"
+      loop: "{{ freebsd_opensmptd_virtuals }}"
+      notify: Restart smtpd
+
+  handlers:
+    - name: Restart smtpd
+      ansible.builtin.service:
+        name: smtpd
+        state: restarted
+      when: freebsd_opensmptd_restart_mail_services | bool
+
+    - name: Restart dovecot
+      ansible.builtin.service:
+        name: dovecot
+        state: restarted
+      when: freebsd_opensmptd_restart_mail_services | bool

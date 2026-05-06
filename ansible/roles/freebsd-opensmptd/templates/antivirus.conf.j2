@@ -1,0 +1,8 @@
+clamav {
+  action = "add header";
+  message = '${SCANNER}: virus found: "${VIRUS}"';
+  scan_mime_parts = true;
+  symbol = "CLAM_VIRUS";
+  type = "clamav";
+  servers = "{{ freebsd_opensmptd_clamav_rspamd_server }}";
+}

@@ -1,0 +1,31 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Restart redis
+  ansible.builtin.service:
+    name: redis
+    state: restarted
+
+- name: Restart rspamd
+  ansible.builtin.service:
+    name: rspamd
+    state: restarted
+
+- name: Restart smtpd
+  ansible.builtin.service:
+    name: smtpd
+    state: restarted
+
+- name: Restart dovecot
+  ansible.builtin.service:
+    name: dovecot
+    state: restarted
+
+- name: Restart clamav freshclam
+  ansible.builtin.service:
+    name: clamav-freshclam
+    state: restarted
+
+- name: Restart clamav clamd
+  ansible.builtin.service:
+    name: clamav-clamd
+    state: restarted

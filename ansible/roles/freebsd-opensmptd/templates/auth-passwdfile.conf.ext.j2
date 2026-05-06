@@ -1,0 +1,10 @@
+passdb {
+  driver = passwd-file
+  args = scheme=CRYPT /usr/local/etc/mail/passwd
+}
+
+userdb {
+  default_fields = uid={{ freebsd_opensmptd_vmail_user }} gid={{ freebsd_opensmptd_vmail_group }} home={{ freebsd_opensmptd_vmail_home }}/%d/%n
+  args = /usr/local/etc/mail/passwd
+  driver = passwd-file
+}

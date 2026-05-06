@@ -1,0 +1,22 @@
+service managesieve-login {
+  inet_listener sieve {
+    port = 4190
+  }
+
+  service_count = 1
+  vsz_limit = 64M
+}
+
+service managesieve {
+  process_limit = 1024
+}
+
+protocol sieve {
+  mail_max_userip_connections = {{ freebsd_opensmptd_dovecot_sieve_userip_connections }}
+}
+
+plugin {
+  sieve_pipe_bin_dir = {{ freebsd_opensmptd_dovecot_sieve_dir }}
+  sieve = file:{{ freebsd_opensmptd_vmail_home }}/%d/%n/sieve;active={{ freebsd_opensmptd_vmail_home }}/%d/%n/.dovecot.sieve
+  sieve_user_log = file:{{ freebsd_opensmptd_vmail_home }}/%d/%n/sieve/sieve_error.log
+}

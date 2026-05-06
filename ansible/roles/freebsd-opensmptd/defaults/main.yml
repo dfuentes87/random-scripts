@@ -1,0 +1,53 @@
+#SPDX-License-Identifier: MIT-0
+---
+freebsd_opensmptd_domain: ""
+freebsd_opensmptd_hostname: "{{ ('mail.' ~ freebsd_opensmptd_domain) if freebsd_opensmptd_domain | length > 0 else '' }}"
+
+freebsd_opensmptd_cert_fullchain: "/usr/local/etc/letsencrypt/live/{{ freebsd_opensmptd_hostname }}/fullchain.pem"
+freebsd_opensmptd_cert_privkey: "/usr/local/etc/letsencrypt/live/{{ freebsd_opensmptd_hostname }}/privkey.pem"
+
+freebsd_opensmptd_mail_packages:
+  - rspamd
+  - opensmtpd
+  - opensmtpd-filter-senderscore
+  - opensmtpd-filter-rspamd
+  - dovecot
+  - dovecot-pigeonhole
+
+freebsd_opensmptd_install_table_passwd_package: true
+freebsd_opensmptd_table_passwd_package: opensmtpd-extras-table-passwd
+freebsd_opensmptd_build_table_passwd: false
+freebsd_opensmptd_table_passwd_build_dir: /usr/local/src/table-passwd
+freebsd_opensmptd_table_passwd_repo: https://github.com/OpenSMTPD/table-passwd.git
+
+freebsd_opensmptd_redis_password: ""
+freebsd_opensmptd_redis_bind: "*"
+freebsd_opensmptd_redis_maxmemory: 512mb
+freebsd_opensmptd_redis_maxmemory_policy: volatile-lru
+freebsd_opensmptd_rspamd_redis_servers: []
+
+freebsd_opensmptd_letsencrypt_dir: /usr/local/etc/letsencrypt
+freebsd_opensmptd_mail_config_dir: /usr/local/etc/mail
+freebsd_opensmptd_rspamd_local_dir: /usr/local/etc/rspamd/local.d
+freebsd_opensmptd_dkim_dir: /usr/local/etc/mail/dkim
+freebsd_opensmptd_dkim_selector: mail
+freebsd_opensmptd_dkim_key_path: "{{ freebsd_opensmptd_dkim_dir }}/{{ freebsd_opensmptd_hostname }}.key"
+freebsd_opensmptd_dkim_public_key_path: "{{ freebsd_opensmptd_dkim_dir }}/public.key"
+freebsd_opensmptd_generate_dkim: true
+freebsd_opensmptd_write_dkim_dns_record: true
+freebsd_opensmptd_dkim_dns_output_path: "{{ playbook_dir }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
+
+freebsd_opensmptd_vmail_user: vmail
+freebsd_opensmptd_vmail_group: vmail
+freebsd_opensmptd_vmail_home: /var/vmail
+
+freebsd_opensmptd_dovecot_sieve_dir: /usr/local/lib/dovecot/sieve
+freebsd_opensmptd_dovecot_mail_max_userip_connections: 100
+freebsd_opensmptd_dovecot_sieve_userip_connections: 10
+
+freebsd_opensmptd_enable_clamav: true
+freebsd_opensmptd_run_freshclam: true
+freebsd_opensmptd_clamav_tcp_socket: 3310
+freebsd_opensmptd_clamav_rspamd_server: ""
+
+freebsd_opensmptd_validate_configs: true

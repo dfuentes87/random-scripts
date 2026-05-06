@@ -1,0 +1,4 @@
+protocol imap {
+  mail_plugins = $mail_plugins imap_sieve zlib
+  mail_max_userip_connections = {{ freebsd_opensmptd_dovecot_mail_max_userip_connections }}
+}
