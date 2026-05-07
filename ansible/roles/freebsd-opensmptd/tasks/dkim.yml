@@ -1,0 +1,30 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Read DKIM public key
+  ansible.builtin.slurp:
+    src: "{{ freebsd_opensmptd_dkim_public_key_path }}"
+  register: freebsd_opensmptd_dkim_public_key_file
+
+- name: Write DKIM DNS record locally
+  ansible.builtin.copy:
+    dest: "{{ freebsd_opensmptd_dkim_dns_output_path }}"
+    mode: "0600"
+    content: |
+      host={{ freebsd_opensmptd_dkim_selector }}._domainkey.{{ freebsd_opensmptd_domain }}
+
+      unsplit:
+      {{ freebsd_opensmptd_dkim_selector }}._domainkey.{{ freebsd_opensmptd_domain }} IN TXT "{{ freebsd_opensmptd_dkim_dns_value }}"
+
+      split:
+      {{ freebsd_opensmptd_dkim_selector }}._domainkey.{{ freebsd_opensmptd_domain }} IN TXT ( {% for chunk in freebsd_opensmptd_dkim_dns_value | regex_findall('.{1,255}') %}"{{ chunk }}"{% if not loop.last %} {% endif %}{% endfor %} )
+  vars:
+    freebsd_opensmptd_dkim_public_key: "{{ freebsd_opensmptd_dkim_public_key_file.content | b64decode | regex_replace('-----BEGIN PUBLIC KEY-----', '') | regex_replace('-----END PUBLIC KEY-----', '') | regex_replace('\\s+', '') }}"
+    freebsd_opensmptd_dkim_dns_value: "v=DKIM1; k=rsa; p={{ freebsd_opensmptd_dkim_public_key }}"
+  delegate_to: localhost
+  become: false
+
+- name: Show DKIM DNS output path
+  ansible.builtin.debug:
+    msg:
+      - "DKIM DNS record written locally:"
+      - "{{ freebsd_opensmptd_dkim_dns_output_path }}"

@@ -1,0 +1,39 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Install table-passwd build dependencies
+  ansible.builtin.package:
+    name:
+      - autoconf
+      - automake
+      - git
+    state: present
+
+- name: Checkout table-passwd source
+  ansible.builtin.git:
+    repo: "{{ freebsd_opensmptd_table_passwd_repo }}"
+    dest: "{{ freebsd_opensmptd_table_passwd_build_dir }}"
+    version: HEAD
+
+- name: Bootstrap table-passwd
+  ansible.builtin.command:
+    cmd: sh bootstrap
+    chdir: "{{ freebsd_opensmptd_table_passwd_build_dir }}"
+    creates: "{{ freebsd_opensmptd_table_passwd_build_dir }}/configure"
+
+- name: Configure table-passwd
+  ansible.builtin.command:
+    cmd: ./configure
+    chdir: "{{ freebsd_opensmptd_table_passwd_build_dir }}"
+    creates: "{{ freebsd_opensmptd_table_passwd_build_dir }}/Makefile"
+
+- name: Build table-passwd
+  ansible.builtin.command:
+    cmd: make
+    chdir: "{{ freebsd_opensmptd_table_passwd_build_dir }}"
+    creates: "{{ freebsd_opensmptd_table_passwd_build_dir }}/table-passwd"
+
+- name: Install table-passwd
+  ansible.builtin.command:
+    cmd: make install
+    chdir: "{{ freebsd_opensmptd_table_passwd_build_dir }}"
+    creates: /usr/local/libexec/opensmtpd/table-passwd

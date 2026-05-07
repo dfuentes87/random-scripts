@@ -1,0 +1,31 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Validate FreeBSD target
+  ansible.builtin.assert:
+    that:
+      - ansible_system == "FreeBSD"
+    fail_msg: This role must run inside the target FreeBSD mail jail.
+
+- name: Check FreeBSD jail status
+  ansible.builtin.command:
+    cmd: sysctl -n security.jail.jailed
+  register: freebsd_opensmptd_jail_status
+  changed_when: false
+  when: freebsd_opensmptd_require_jail | bool
+
+- name: Validate FreeBSD jail context
+  ansible.builtin.assert:
+    that:
+      - freebsd_opensmptd_jail_status.stdout == "1"
+    fail_msg: This role must run inside a FreeBSD jail. Set freebsd_opensmptd_require_jail=false only for controlled testing.
+  when: freebsd_opensmptd_require_jail | bool
+
+- name: Validate required deployment values
+  ansible.builtin.assert:
+    that:
+      - freebsd_opensmptd_domain | length > 0
+      - freebsd_opensmptd_hostname | length > 0
+      - freebsd_opensmptd_redis_password | length > 0
+      - freebsd_opensmptd_rspamd_redis_servers | length > 0
+      - not freebsd_opensmptd_enable_clamav | bool or freebsd_opensmptd_clamav_rspamd_server | length > 0
+    fail_msg: Set the mail domain, mail hostname, Redis password, Redis server list, and ClamAV server in the playbook.

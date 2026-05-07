@@ -17,6 +17,17 @@
         destination: user@example.net
 
   tasks:
+    - name: Validate unique mailbox and alias addresses
+      ansible.builtin.assert:
+        that:
+          - freebsd_opensmptd_mail_user_addresses | length == freebsd_opensmptd_mail_user_addresses | unique | list | length
+          - freebsd_opensmptd_mail_alias_addresses | length == freebsd_opensmptd_mail_alias_addresses | unique | list | length
+          - freebsd_opensmptd_mail_user_addresses | intersect(freebsd_opensmptd_mail_alias_addresses) | length == 0
+        fail_msg: Mailbox users and aliases must have unique addresses, and the same address cannot appear in both lists.
+      vars:
+        freebsd_opensmptd_mail_user_addresses: "{{ freebsd_opensmptd_mail_users | default([]) | map(attribute='address') | list }}"
+        freebsd_opensmptd_mail_alias_addresses: "{{ freebsd_opensmptd_mail_aliases | default([]) | map(attribute='address') | list }}"
+
     - name: Ensure mail config directory exists
       ansible.builtin.file:
         path: "{{ freebsd_opensmptd_mail_passwd_path | dirname }}"

@@ -1,0 +1,34 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Install Redis
+  ansible.builtin.package:
+    name: redis
+    state: present
+
+- name: Install mail service packages
+  ansible.builtin.package:
+    name: "{{ freebsd_opensmptd_mail_packages }}"
+    state: present
+
+- name: Install OpenSMTPD passwd table package or build from source
+  when:
+    - freebsd_opensmptd_install_table_passwd_package | bool
+    - not freebsd_opensmptd_build_table_passwd | bool
+  block:
+    - name: Install OpenSMTPD passwd table package
+      ansible.builtin.package:
+        name: "{{ freebsd_opensmptd_table_passwd_package }}"
+        state: present
+  rescue:
+    - name: Build OpenSMTPD passwd table from source after package install failed
+      ansible.builtin.include_tasks: table_passwd_source.yml
+
+- name: Build OpenSMTPD passwd table from source
+  ansible.builtin.include_tasks: table_passwd_source.yml
+  when: freebsd_opensmptd_build_table_passwd | bool
+
+- name: Install ClamAV
+  ansible.builtin.package:
+    name: clamav
+    state: present
+  when: freebsd_opensmptd_enable_clamav | bool

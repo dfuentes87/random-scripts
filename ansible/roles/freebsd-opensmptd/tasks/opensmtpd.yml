@@ -1,0 +1,31 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Create mail config directory
+  ansible.builtin.file:
+    path: "{{ freebsd_opensmptd_mail_config_dir }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: "0755"
+
+- name: Initialize mail account files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: touch
+    owner: root
+    group: wheel
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+  loop:
+    - /usr/local/etc/mail/passwd
+    - /usr/local/etc/mail/virtuals
+
+- name: Configure OpenSMTPD
+  ansible.builtin.template:
+    src: smtpd.conf.j2
+    dest: /usr/local/etc/mail/smtpd.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  notify: Restart smtpd

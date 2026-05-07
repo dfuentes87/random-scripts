@@ -1,0 +1,27 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Configure Redis
+  ansible.builtin.lineinfile:
+    path: /usr/local/etc/redis.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    create: false
+  loop:
+    - regexp: '^\s*#?\s*requirepass\s+'
+      line: "requirepass {{ freebsd_opensmptd_redis_password }}"
+    - regexp: '^\s*#?\s*maxmemory\s+'
+      line: "maxmemory {{ freebsd_opensmptd_redis_maxmemory }}"
+    - regexp: '^\s*#?\s*maxmemory-policy\s+'
+      line: "maxmemory-policy {{ freebsd_opensmptd_redis_maxmemory_policy }}"
+    - regexp: '^\s*#?\s*bind\s+'
+      line: "bind {{ freebsd_opensmptd_redis_bind }}"
+    - regexp: '^\s*#?\s*protected-mode\s+'
+      line: "protected-mode yes"
+  no_log: true
+  notify: Restart redis
+
+- name: Enable and start Redis
+  ansible.builtin.service:
+    name: redis
+    enabled: true
+    state: started

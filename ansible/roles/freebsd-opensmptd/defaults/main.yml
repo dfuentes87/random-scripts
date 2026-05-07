@@ -51,6 +51,8 @@ freebsd_opensmptd_dovecot_sieve_userip_connections: 10
 freebsd_opensmptd_enable_clamav: true
 freebsd_opensmptd_run_freshclam: true
 freebsd_opensmptd_clamav_tcp_socket: 3310
+freebsd_opensmptd_clamav_tcp_addr: 127.0.0.1
 freebsd_opensmptd_clamav_rspamd_server: ""
+freebsd_opensmptd_freshclam_database_mirror: database.clamav.net
 
 freebsd_opensmptd_validate_configs: true

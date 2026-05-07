@@ -1,0 +1,38 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Create ClamAV runtime directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: clamav
+    group: clamav
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /var/log/clamav
+      mode: "0755"
+    - path: /var/run/clamav
+      mode: "0755"
+
+- name: Configure ClamAV clamd
+  ansible.builtin.template:
+    src: clamd.conf.j2
+    dest: /usr/local/etc/clamd.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  notify: Restart clamav clamd
+
+- name: Configure ClamAV freshclam
+  ansible.builtin.template:
+    src: freshclam.conf.j2
+    dest: /usr/local/etc/freshclam.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  notify: Restart clamav freshclam
+
+- name: Update ClamAV definitions
+  ansible.builtin.command:
+    cmd: freshclam
+    creates: /var/db/clamav/main.cvd
+  when: freebsd_opensmptd_run_freshclam | bool

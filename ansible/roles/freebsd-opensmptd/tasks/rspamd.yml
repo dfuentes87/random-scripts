@@ -1,0 +1,69 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Create rspamd and DKIM directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('wheel') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ freebsd_opensmptd_rspamd_local_dir }}"
+      mode: "0755"
+    - path: "{{ freebsd_opensmptd_dkim_dir }}"
+      owner: rspamd
+      group: rspamd
+      mode: "0750"
+
+- name: Generate DKIM private key
+  ansible.builtin.command:
+    cmd: "openssl genrsa -out {{ freebsd_opensmptd_dkim_key_path }} 2048"
+    creates: "{{ freebsd_opensmptd_dkim_key_path }}"
+  when: freebsd_opensmptd_generate_dkim | bool
+  notify: Restart rspamd
+
+- name: Generate DKIM public key
+  ansible.builtin.command:
+    cmd: "openssl rsa -in {{ freebsd_opensmptd_dkim_key_path }} -pubout -out {{ freebsd_opensmptd_dkim_public_key_path }}"
+    creates: "{{ freebsd_opensmptd_dkim_public_key_path }}"
+  when: freebsd_opensmptd_generate_dkim | bool
+
+- name: Set DKIM key ownership and permissions
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: rspamd
+    group: rspamd
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ freebsd_opensmptd_dkim_key_path }}"
+      mode: "0400"
+    - path: "{{ freebsd_opensmptd_dkim_public_key_path }}"
+      mode: "0440"
+  when: freebsd_opensmptd_generate_dkim | bool
+
+- name: Configure rspamd local settings
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/usr/local/etc/rspamd/local.d/{{ item }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  loop:
+    - redis.conf
+    - spf.conf
+    - dkim_signing.conf
+    - phishing.conf
+    - surbl.conf
+    - url_reputation.conf
+    - url_tags.conf
+  notify: Restart rspamd
+
+- name: Configure rspamd ClamAV integration
+  ansible.builtin.template:
+    src: antivirus.conf.j2
+    dest: /usr/local/etc/rspamd/local.d/antivirus.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+  when: freebsd_opensmptd_enable_clamav | bool
+  notify: Restart rspamd

@@ -1,0 +1,112 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Create Dovecot directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('wheel') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - path: /usr/local/etc/dovecot
+    - path: /usr/local/etc/dovecot/conf.d
+    - path: "{{ freebsd_opensmptd_dovecot_sieve_dir }}"
+
+- name: Create vmail group
+  ansible.builtin.group:
+    name: "{{ freebsd_opensmptd_vmail_group }}"
+    system: true
+
+- name: Create vmail user
+  ansible.builtin.user:
+    name: "{{ freebsd_opensmptd_vmail_user }}"
+    group: "{{ freebsd_opensmptd_vmail_group }}"
+    home: "{{ freebsd_opensmptd_vmail_home }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+
+- name: Create vmail home
+  ansible.builtin.file:
+    path: "{{ freebsd_opensmptd_vmail_home }}"
+    state: directory
+    owner: "{{ freebsd_opensmptd_vmail_user }}"
+    group: "{{ freebsd_opensmptd_vmail_group }}"
+    mode: "0750"
+
+- name: Configure Dovecot conf.d files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/usr/local/etc/dovecot/conf.d/{{ item }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  loop:
+    - 10-auth.conf
+    - 10-mail.conf
+    - 10-ssl.conf
+    - 15-mailboxes.conf
+    - 20-imap.conf
+    - 20-lmtp.conf
+    - auth-passwdfile.conf.ext
+    - 90-plugin.conf
+    - 20-managesieve.conf.ext
+  notify: Restart dovecot
+
+- name: Configure Dovecot main config
+  ansible.builtin.template:
+    src: dovecot.conf.j2
+    dest: /usr/local/etc/dovecot/dovecot.conf
+    owner: root
+    group: wheel
+    mode: "0644"
+    validate: doveconf -c %s -n
+  notify: Restart dovecot
+
+- name: Check compiled Sieve scripts
+  ansible.builtin.stat:
+    path: "{{ freebsd_opensmptd_dovecot_sieve_dir }}/{{ item.bin }}"
+  loop:
+    - src: report-ham.sieve
+      bin: report-ham.svbin
+    - src: report-spam.sieve
+      bin: report-spam.svbin
+    - src: spam-to-folder.sieve
+      bin: spam-to-folder.svbin
+  register: freebsd_opensmptd_compiled_sieve_scripts
+
+- name: Install Sieve scripts
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ freebsd_opensmptd_dovecot_sieve_dir }}/{{ item.src }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  loop:
+    - src: report-ham.sieve
+      bin: report-ham.svbin
+    - src: report-spam.sieve
+      bin: report-spam.svbin
+    - src: spam-to-folder.sieve
+      bin: spam-to-folder.svbin
+  register: freebsd_opensmptd_sieve_scripts
+  notify: Restart dovecot
+
+- name: Compile changed Sieve scripts
+  ansible.builtin.command:
+    cmd: "sievec {{ freebsd_opensmptd_dovecot_sieve_dir }}/{{ freebsd_opensmptd_sieve_scripts.results[item].item.src }}"
+  loop: "{{ range(0, freebsd_opensmptd_sieve_scripts.results | length) | list }}"
+  when: freebsd_opensmptd_sieve_scripts.results[item].changed or not freebsd_opensmptd_compiled_sieve_scripts.results[item].stat.exists
+  notify: Restart dovecot
+
+- name: Install rspamd learning helper scripts
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ freebsd_opensmptd_dovecot_sieve_dir }}/{{ item }}"
+    owner: root
+    group: wheel
+    mode: "0755"
+  loop:
+    - sa-learn-ham.sh
+    - sa-learn-spam.sh
+  notify: Restart dovecot
