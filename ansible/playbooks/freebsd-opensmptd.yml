@@ -12,14 +12,9 @@
     freebsd_opensmptd_cert_privkey: /usr/local/etc/letsencrypt/live/mail.example.net/privkey.pem
 
     freebsd_opensmptd_redis_password: replace-with-a-random-redis-password
-    freebsd_opensmptd_redis_bind: 127.0.0.1
-    freebsd_opensmptd_rspamd_redis_servers:
-      - 127.0.0.1
-
-    freebsd_opensmptd_clamav_rspamd_server: 127.0.0.1:3310
 
     # Written on the Ansible controller after DKIM key generation.
-    freebsd_opensmptd_dkim_dns_output_path: "{{ playbook_dir }}/example.net-dkim.txt"
+    freebsd_opensmptd_dkim_dns_output_path: "{{ playbook_dir }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
 
     # Set this true if the package is unavailable or broken for this jail.
     freebsd_opensmptd_build_table_passwd: false
