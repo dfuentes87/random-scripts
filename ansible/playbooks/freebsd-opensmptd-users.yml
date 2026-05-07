@@ -12,9 +12,7 @@
       - address: user@example.net
         password_hash: replace-with-smtpctl-encrypt-output
 
-    freebsd_opensmptd_virtuals:
-      - address: user@example.net
-        destination: vmail
+    freebsd_opensmptd_mail_aliases:
       - address: postmaster@example.net
         destination: user@example.net
 
@@ -54,7 +52,19 @@
         - Restart smtpd
         - Restart dovecot
 
-    - name: Create OpenSMTPD virtual mappings
+    - name: Create OpenSMTPD mailbox virtual mappings
+      ansible.builtin.lineinfile:
+        path: "{{ freebsd_opensmptd_mail_virtuals_path }}"
+        regexp: "^{{ item.address | regex_escape }}\\s+"
+        line: "{{ item.address }} vmail"
+        owner: root
+        group: wheel
+        mode: "0640"
+      loop: "{{ freebsd_opensmptd_mail_users }}"
+      no_log: true
+      notify: Restart smtpd
+
+    - name: Create OpenSMTPD alias virtual mappings
       ansible.builtin.lineinfile:
         path: "{{ freebsd_opensmptd_mail_virtuals_path }}"
         regexp: "^{{ item.address | regex_escape }}\\s+"
@@ -62,7 +72,7 @@
         owner: root
         group: wheel
         mode: "0640"
-      loop: "{{ freebsd_opensmptd_virtuals }}"
+      loop: "{{ freebsd_opensmptd_mail_aliases | default([]) }}"
       notify: Restart smtpd
 
   handlers:

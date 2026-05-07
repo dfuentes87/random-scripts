@@ -1,5 +1,25 @@
 #SPDX-License-Identifier: MIT-0
 ---
+- name: Validate FreeBSD target
+  ansible.builtin.assert:
+    that:
+      - ansible_system == "FreeBSD"
+    fail_msg: This role must run inside the target FreeBSD mail jail.
+
+- name: Check FreeBSD jail status
+  ansible.builtin.command:
+    cmd: sysctl -n security.jail.jailed
+  register: freebsd_opensmptd_jail_status
+  changed_when: false
+  when: freebsd_opensmptd_require_jail | bool
+
+- name: Validate FreeBSD jail context
+  ansible.builtin.assert:
+    that:
+      - freebsd_opensmptd_jail_status.stdout == "1"
+    fail_msg: This role must run inside a FreeBSD jail. Set freebsd_opensmptd_require_jail=false only for controlled testing.
+  when: freebsd_opensmptd_require_jail | bool
+
 - name: Validate required deployment values
   ansible.builtin.assert:
     that:

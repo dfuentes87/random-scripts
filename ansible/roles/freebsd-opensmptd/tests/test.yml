@@ -9,6 +9,7 @@
     freebsd_opensmptd_rspamd_redis_servers:
       - 127.0.0.1
     freebsd_opensmptd_clamav_rspamd_server: 127.0.0.1:3310
+    freebsd_opensmptd_require_jail: false
     freebsd_opensmptd_write_dkim_dns_record: false
   roles:
     - role: ..

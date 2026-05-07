@@ -27,6 +27,10 @@ freebsd_opensmptd_rspamd_redis_servers:
 freebsd_opensmptd_clamav_rspamd_server: 127.0.0.1:3310
 ```
 
+Redis defaults to `127.0.0.1` because rspamd is expected to run in the same jail.
+Override `freebsd_opensmptd_redis_bind` only if Redis must accept connections
+from outside the mail jail.
+
 The role creates the `vmail` service account. Mailbox account creation is
 intentionally separate from this service role. Use
 `ansible/playbooks/freebsd-opensmptd-users.yml` for mailbox setup.
@@ -36,12 +40,14 @@ freebsd_opensmptd_mail_users:
   - address: user@example.net
     password_hash: replace-with-smtpctl-encrypt-output
 
-freebsd_opensmptd_virtuals:
-  - address: user@example.net
-    destination: vmail
+freebsd_opensmptd_mail_aliases:
   - address: postmaster@example.net
     destination: user@example.net
 ```
+
+Mailbox users are automatically mapped to `vmail` in
+`/usr/local/etc/mail/virtuals`; aliases are managed separately through
+`freebsd_opensmptd_mail_aliases`.
 
 Set `freebsd_opensmptd_build_table_passwd: true` if
 `opensmtpd-extras-table-passwd` is unavailable or broken and the jail should

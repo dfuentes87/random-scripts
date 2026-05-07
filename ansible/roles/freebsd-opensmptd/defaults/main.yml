@@ -20,11 +20,14 @@ freebsd_opensmptd_build_table_passwd: false
 freebsd_opensmptd_table_passwd_build_dir: /usr/local/src/table-passwd
 freebsd_opensmptd_table_passwd_repo: https://github.com/OpenSMTPD/table-passwd.git
 
+freebsd_opensmptd_require_jail: true
+
 freebsd_opensmptd_redis_password: ""
-freebsd_opensmptd_redis_bind: "*"
+freebsd_opensmptd_redis_bind: "127.0.0.1"
 freebsd_opensmptd_redis_maxmemory: 512mb
 freebsd_opensmptd_redis_maxmemory_policy: volatile-lru
-freebsd_opensmptd_rspamd_redis_servers: []
+freebsd_opensmptd_rspamd_redis_servers:
+  - 127.0.0.1
 
 freebsd_opensmptd_letsencrypt_dir: /usr/local/etc/letsencrypt
 freebsd_opensmptd_mail_config_dir: /usr/local/etc/mail
