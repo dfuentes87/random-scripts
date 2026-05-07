@@ -1,17 +1,15 @@
 freebsd-opensmptd
 =================
 
-Configures the mail services from the Redis through ClamAV sections of the
-FreeBSD OpenSMTPD mail-server notes. The role is intended to run against the
-mail jail itself, not against the jail host.
+Sets up OpenSMTPD, rspamd, Dovecot, Redis, and ClamAV. Redis is used for rspamd caching.
+The role is designed to run against a dedicated mail jail, not against the host.
 
 Requirements
 ------------
 
-The jail must be reachable by Ansible and able to install FreeBSD packages.
-TLS certificates should already be available inside the jail at
-`freebsd_opensmptd_cert_fullchain` and `freebsd_opensmptd_cert_privkey`, usually
-by mounting the Let's Encrypt directory from the nginx/certbot jail or host.
+Jail must already be created, and TLS certificates should already be available inside 
+the jail at `freebsd_opensmptd_cert_fullchain` and `freebsd_opensmptd_cert_privkey` paths,
+usually by mounting the Let's Encrypt directory from the nginx/certbot jail or host.
 
 Role Variables
 --------------
@@ -28,22 +26,10 @@ freebsd_opensmptd_clamav_rspamd_server: 127.0.0.1:3310
 ```
 
 Redis defaults to `127.0.0.1` because rspamd is expected to run in the same jail.
-Override `freebsd_opensmptd_redis_bind` only if Redis must accept connections
-from outside the mail jail.
 
 The role creates the `vmail` service account. Mailbox account creation is
 intentionally separate from this service role. Use
 `ansible/playbooks/freebsd-opensmptd-users.yml` for mailbox setup.
-
-```yaml
-freebsd_opensmptd_mail_users:
-  - address: user@example.net
-    password_hash: replace-with-smtpctl-encrypt-output
-
-freebsd_opensmptd_mail_aliases:
-  - address: postmaster@example.net
-    destination: user@example.net
-```
 
 Mailbox users are automatically mapped to `vmail` in
 `/usr/local/etc/mail/virtuals`; aliases are managed separately through
