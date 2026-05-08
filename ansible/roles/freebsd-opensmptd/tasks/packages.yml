@@ -10,9 +10,6 @@
     state: present
 
 - name: Install OpenSMTPD passwd table package or build from source
-  when:
-    - freebsd_opensmptd_install_table_passwd_package | bool
-    - not freebsd_opensmptd_build_table_passwd | bool
   block:
     - name: Install OpenSMTPD passwd table package
       ansible.builtin.package:
@@ -21,10 +18,6 @@
   rescue:
     - name: Build OpenSMTPD passwd table from source after package install failed
       ansible.builtin.include_tasks: table_passwd_source.yml
-
-- name: Build OpenSMTPD passwd table from source
-  ansible.builtin.include_tasks: table_passwd_source.yml
-  when: freebsd_opensmptd_build_table_passwd | bool
 
 - name: Install ClamAV
   ansible.builtin.package:

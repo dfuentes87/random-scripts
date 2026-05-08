@@ -33,6 +33,10 @@ Mailbox users are automatically mapped to `vmail` in
 The role writes DNS-ready TXT records in both split and unsplit formats to `freebsd_opensmptd_dkim_dns_output_path` on the Ansible controller. 
 The private key remains on the jail at `freebsd_opensmptd_dkim_key_path`.
 
+The DKIM output path defaults to the Ansible controller user's home directory.
+The role tries to install `opensmtpd-extras-table-passwd` from packages first;
+if that fails, it builds table-passwd from source.
+
 Dependencies
 ------------
 

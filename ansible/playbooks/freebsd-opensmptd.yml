@@ -14,10 +14,7 @@
     freebsd_opensmptd_redis_password: replace-with-a-random-redis-password
 
     # Written on the Ansible controller after DKIM key generation.
-    freebsd_opensmptd_dkim_dns_output_path: "{{ playbook_dir }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
-
-    # Set this true if the package is unavailable or broken for this jail.
-    freebsd_opensmptd_build_table_passwd: false
+    freebsd_opensmptd_dkim_dns_output_path: "{{ lookup('env', 'HOME') }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
 
   roles:
     - role: ../roles/freebsd-opensmptd

@@ -13,9 +13,7 @@ freebsd_opensmptd_mail_packages:
   - dovecot
   - dovecot-pigeonhole
 
-freebsd_opensmptd_install_table_passwd_package: true
 freebsd_opensmptd_table_passwd_package: opensmtpd-extras-table-passwd
-freebsd_opensmptd_build_table_passwd: false
 freebsd_opensmptd_table_passwd_build_dir: /usr/local/src/table-passwd
 freebsd_opensmptd_table_passwd_repo: https://github.com/OpenSMTPD/table-passwd.git
 
@@ -37,7 +35,7 @@ freebsd_opensmptd_dkim_key_path: "{{ freebsd_opensmptd_dkim_dir }}/{{ freebsd_op
 freebsd_opensmptd_dkim_public_key_path: "{{ freebsd_opensmptd_dkim_dir }}/public.key"
 freebsd_opensmptd_generate_dkim: true
 freebsd_opensmptd_write_dkim_dns_record: true
-freebsd_opensmptd_dkim_dns_output_path: "{{ playbook_dir }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
+freebsd_opensmptd_dkim_dns_output_path: "{{ lookup('env', 'HOME') }}/{{ freebsd_opensmptd_domain }}-dkim.txt"
 
 freebsd_opensmptd_vmail_user: vmail
 freebsd_opensmptd_vmail_group: vmail
