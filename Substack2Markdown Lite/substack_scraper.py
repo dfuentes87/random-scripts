@@ -3,6 +3,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
+from html import escape
 from typing import List, Optional, Tuple
 from time import sleep
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -32,6 +33,166 @@ HTML_TEMPLATE: str = "author_template.html"
 JSON_DATA_DIR: str = "data"
 X_DOMAIN_PATTERN = re.compile(r'https?://(?:www\.)?x\.com(?=[/?#\s]|$)')
 STRAY_MARKDOWN_DELIMITER_PATTERN = re.compile(r'(?<=\S)\s+(?:\*\*|__)\s+(?=\S)')
+TWEET_EMBED_SELECTOR = ".twitter-embed"
+TWEET_HANDLE_PATTERN = re.compile(r'(?:x|xcancel)\.com/([^/]+)/status')
+OUTPUT_FORMATS = ("both", "html", "md")
+
+
+def rewrite_x_links(node) -> None:
+    """
+    Rewrites x.com anchor hrefs to their xcancel.com mirror in place.
+    """
+    for anchor in node.select("a[href]"):
+        anchor["href"] = X_DOMAIN_PATTERN.sub("https://xcancel.com", anchor["href"])
+
+
+def clean_content_html(content_node) -> str:
+    """
+    Produces sanitized, directly-renderable HTML from a Substack content node.
+
+    Unlike the markdown round-trip, this preserves rich embeds (e.g. the
+    ``.twitter-embed`` tweet cards) as real HTML instead of flattening them into
+    a broken markdown link.
+    """
+    node = BeautifulSoup(str(content_node), "html.parser")
+    for tag in node.select("script, style, button"):
+        tag.decompose()
+    # Drop Substack's React hydration blobs (they also leak the original x.com URL).
+    for tag in node.find_all(attrs={"data-attrs": True}):
+        del tag["data-attrs"]
+    for tag in node.find_all(attrs={"data-component-name": True}):
+        del tag["data-component-name"]
+    # Render footnote reference markers as real superscripts. Substack styles these
+    # via its own CSS (which the export doesn't inherit); wrapping in <sup> makes them
+    # superscript by default, independent of whether the stylesheet loads.
+    for marker in node.select("a.footnote-anchor, a.footnote-number"):
+        if marker.parent is not None and marker.parent.name == "sup":
+            continue
+        marker.wrap(node.new_tag("sup"))
+    rewrite_x_links(node)
+    return str(node)
+
+
+def _tweet_person(container, url: str = "") -> Tuple[str, str]:
+    """
+    Extracts (display name, handle) from a tweet header/quoted-tweet container.
+    """
+    spans = container.find_all("span")
+    name = spans[0].get_text(strip=True) if spans else ""
+    handle = ""
+    for span in spans:
+        text = span.get_text(strip=True)
+        if text.startswith("@"):
+            handle = text[1:]
+            break
+    if not handle and url:
+        match = TWEET_HANDLE_PATTERN.search(url)
+        if match:
+            handle = match.group(1)
+    if not name:
+        name = handle
+    return name, handle
+
+
+def _collapse_ws(text: str) -> str:
+    return re.sub(r"[ \t]*\n[ \t]*", "\n", re.sub(r"[ \t]+", " ", text)).strip()
+
+
+def _tweet_footer_parts(footer) -> Tuple[str, str]:
+    """
+    Splits a tweet footer into ("timestamp - views" meta, "replies - reposts - likes" stats).
+    """
+    subdivs = [d for d in footer.find_all("div", recursive=False) if d.find("span")]
+    if subdivs:
+        meta = _collapse_ws(subdivs[0].get_text(" ", strip=True))
+        stats = _collapse_ws(subdivs[1].get_text(" ", strip=True)) if len(subdivs) > 1 else ""
+    else:
+        meta = _collapse_ws(footer.get_text(" ", strip=True))
+        stats = ""
+    return meta, stats
+
+
+def _tweet_blockquote(soup, embed, url: str):
+    """
+    Builds a clean <blockquote> representation of a tweet embed that survives
+    conversion to markdown (single inline link, no image, no stray <hr>).
+    """
+    children = [c for c in embed.children if getattr(c, "name", None)]
+    header, footer = children[0], children[-1]
+    body = children[1:-1]
+
+    name, handle = _tweet_person(header, url)
+    blockquote = soup.new_tag("blockquote")
+
+    heading = soup.new_tag("p")
+    strong = soup.new_tag("strong")
+    strong.string = name
+    heading.append(strong)
+    heading.append(f" (@{handle})")
+    blockquote.append(heading)
+
+    for part in body:
+        if part.find("picture"):
+            continue
+        text = _collapse_ws(part.get_text("\n", strip=True))
+        if text:
+            paragraph = soup.new_tag("p")
+            paragraph.string = text
+            blockquote.append(paragraph)
+
+    quoted = next((c for c in body if c.find("picture")), None)
+    if quoted is not None:
+        q_name, q_handle = _tweet_person(quoted)
+        q_full = _collapse_ws(quoted.get_text(" ", strip=True))
+        for prefix in (q_name, f"@{q_handle}"):
+            if prefix and q_full.startswith(prefix):
+                q_full = q_full[len(prefix):].lstrip()
+        quote_p = soup.new_tag("p")
+        emphasis = soup.new_tag("em")
+        emphasis.string = "Quoting"
+        quote_p.append(emphasis)
+        quote_p.append(" ")
+        q_strong = soup.new_tag("strong")
+        q_strong.string = q_name
+        quote_p.append(q_strong)
+        quote_p.append(f" (@{q_handle}): {q_full}" if q_full else f" (@{q_handle}):")
+        blockquote.append(quote_p)
+
+    meta, stats = _tweet_footer_parts(footer)
+    footer_p = soup.new_tag("p")
+    if meta:
+        footer_p.append(f"{meta} — ")
+    link = soup.new_tag("a", href=url)
+    link.string = stats or "View on X"
+    footer_p.append(link)
+    blockquote.append(footer_p)
+
+    return blockquote
+
+
+def simplify_tweets_for_markdown(content_node) -> str:
+    """
+    Replaces each tweet embed with a markdown-friendly blockquote, returning HTML
+    ready for html2text. Falls back to a simple link if the embed structure is
+    unexpected, so a Substack markup change degrades gracefully.
+    """
+    node = BeautifulSoup(str(content_node), "html.parser")
+    for embed in node.select(TWEET_EMBED_SELECTOR):
+        anchor = embed.find_parent("a")
+        target = anchor if anchor is not None else embed
+        raw_href = anchor.get("href", "") if anchor is not None else ""
+        url = X_DOMAIN_PATTERN.sub("https://xcancel.com", raw_href)
+        try:
+            replacement = _tweet_blockquote(node, embed, url)
+        except Exception:
+            replacement = node.new_tag("blockquote")
+            paragraph = node.new_tag("p")
+            link = node.new_tag("a", href=url or "#")
+            link.string = "View tweet"
+            paragraph.append(link)
+            replacement.append(paragraph)
+        target.replace_with(replacement)
+    return str(node)
 
 
 def extract_main_part(url: str) -> str:
@@ -67,7 +228,11 @@ def generate_html_file(author_name: str) -> None:
 
 
 class BaseSubstackScraper(ABC):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, output_format: str = "html"):
+        if output_format not in OUTPUT_FORMATS:
+            raise ValueError(f"output_format must be one of {OUTPUT_FORMATS}")
+        self.output_format: str = output_format
+
         if not base_substack_url.endswith("/"):
             base_substack_url += "/"
         self.base_substack_url: str = base_substack_url
@@ -349,9 +514,32 @@ class BaseSubstackScraper(ABC):
 
         return metadata + content
 
-    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> Tuple[str, str, str, str]:
+    @staticmethod
+    def combine_metadata_and_content_html(title: str, subtitle: str, date: str, html_body: str) -> str:
         """
-        Converts substack post soup to markdown, returns metadata and content
+        Prepends title/subtitle/date as HTML to an already-rendered content body.
+        Used by the direct HTML path (no markdown round-trip).
+        """
+        if not isinstance(title, str):
+            raise ValueError("title must be a string")
+
+        if not isinstance(html_body, str):
+            raise ValueError("html_body must be a string")
+
+        parts = [f"<h1>{escape(title)}</h1>"]
+        if subtitle:
+            parts.append(f"<h3>{escape(subtitle)}</h3>")
+        parts.append(f"<p><strong>{escape(date)}</strong></p>")
+        parts.append(html_body)
+        return "\n".join(parts)
+
+    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> Tuple[str, str, str, BeautifulSoup]:
+        """
+        Extracts post metadata and the sanitized content node.
+
+        Returns the content node itself (after same-blog link rewriting) rather
+        than a rendered string, so callers can build markdown and/or clean HTML
+        from independent copies without a lossy round-trip.
         """
         ld_json_tag = soup.find("script", type="application/ld+json")
         date_published = "Date not found"
@@ -383,10 +571,23 @@ class BaseSubstackScraper(ABC):
         if content_node is None:
             raise ValueError("Post content not found")
         self.rewrite_source_links(content_node, source_url)
-        content = str(content_node)
-        md = self.html_to_md(content)
-        md_content = self.combine_metadata_and_content(title, subtitle, date, md)
-        return title, subtitle, date, md_content
+        return title, subtitle, date, content_node
+
+    def build_markdown(self, title: str, subtitle: str, date: str, content_node) -> str:
+        """
+        Renders the post as markdown, with tweet embeds simplified to blockquotes.
+        """
+        md = self.html_to_md(simplify_tweets_for_markdown(content_node))
+        return self.combine_metadata_and_content(title, subtitle, date, md)
+
+    def build_html(self, title: str, subtitle: str, date: str, content_node) -> str:
+        """
+        Renders the post as clean HTML directly from the content node (no markdown
+        round-trip), preserving rich embeds such as tweet cards.
+        """
+        html_body = clean_content_html(content_node)
+        html_doc = self.combine_metadata_and_content_html(title, subtitle, date, html_body)
+        return self.rewrite_generated_html_links(html_doc)
 
     @abstractmethod
     def get_url_soup(self, url: str) -> str:
@@ -423,6 +624,8 @@ class BaseSubstackScraper(ABC):
         """
         essays_data = []
         count = 0
+        want_md = self.output_format in ("md", "both")
+        want_html = self.output_format in ("html", "both")
         total = num_posts_to_scrape if num_posts_to_scrape != 0 else len(self.post_urls)
         for url in tqdm(self.post_urls, total=total):
             try:
@@ -431,28 +634,33 @@ class BaseSubstackScraper(ABC):
                 md_filepath = os.path.join(self.md_save_dir, md_filename)
                 html_filepath = os.path.join(self.html_save_dir, html_filename)
 
-                if not os.path.exists(md_filepath):
+                need_md = want_md and not os.path.exists(md_filepath)
+                need_html = want_html and not os.path.exists(html_filepath)
+
+                if need_md or need_html:
                     soup = self.get_url_soup(url)
                     if soup is None:
                         total += 1
                         continue
-                    title, subtitle, date, md = self.extract_post_data(soup, url)
-                    self.save_to_file(md_filepath, md)
+                    title, subtitle, date, content_node = self.extract_post_data(soup, url)
 
-                    html_content = self.md_to_html(md)
-                    html_content = self.rewrite_generated_html_links(html_content)
-                    self.save_to_html_file(html_filepath, html_content)
+                    if need_md:
+                        self.save_to_file(md_filepath, self.build_markdown(title, subtitle, date, content_node))
 
-                    essays_data.append({
-                        "title": title,
-                        "subtitle": subtitle,
-                        "date": date,
-                        "url": url,
-                        "file_link": md_filepath,
-                        "html_link": html_filepath
-                    })
+                    if need_html:
+                        self.save_to_html_file(html_filepath, self.build_html(title, subtitle, date, content_node))
+
+                    essay = {"title": title, "subtitle": subtitle, "date": date, "url": url}
+                    if want_md and os.path.exists(md_filepath):
+                        essay["md_link"] = md_filepath
+                    if want_html and os.path.exists(html_filepath):
+                        essay["html_link"] = html_filepath
+                    # The browse index links via html_link; fall back to the markdown
+                    # file when only markdown was produced.
+                    essay.setdefault("html_link", essay.get("md_link", md_filepath))
+                    essays_data.append(essay)
                 else:
-                    print(f"File already exists: {md_filepath}")
+                    print(f"File already exists: {md_filepath if want_md else html_filepath}")
             except Exception as e:
                 print(f"Error scraping post: {e}")
             count += 1
@@ -464,8 +672,8 @@ class BaseSubstackScraper(ABC):
 
 
 class SubstackScraper(BaseSubstackScraper):
-    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str):
-        super().__init__(base_substack_url, md_save_dir, html_save_dir)
+    def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, output_format: str = "html"):
+        super().__init__(base_substack_url, md_save_dir, html_save_dir, output_format)
 
     def get_url_soup(self, url: str) -> Optional[BeautifulSoup]:
         """
@@ -491,9 +699,10 @@ class PremiumSubstackScraper(BaseSubstackScraper):
             headless: bool = False,
             edge_path: str = '',
             edge_driver_path: str = '',
-            user_agent: str = ''
+            user_agent: str = '',
+            output_format: str = "html"
     ) -> None:
-        super().__init__(base_substack_url, md_save_dir, html_save_dir)
+        super().__init__(base_substack_url, md_save_dir, html_save_dir, output_format)
 
         options = EdgeOptions()
         if headless:
@@ -609,6 +818,14 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="The directory to save scraped posts as HTML files.",
     )
+    parser.add_argument(
+        "-f",
+        "--format",
+        dest="format",
+        choices=list(OUTPUT_FORMATS),
+        default="html",
+        help="Which files to write: 'html' (default), 'md', or 'both'.",
+    )
 
     return parser.parse_args()
 
@@ -628,13 +845,15 @@ def main():
                 args.url,
                 headless=args.headless,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                output_format=args.format
             )
         else:
             scraper = SubstackScraper(
                 args.url,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                output_format=args.format
             )
 
     else:
@@ -644,13 +863,15 @@ def main():
                 md_save_dir=args.directory,
                 html_save_dir=args.html_directory,
                 edge_path=args.edge_path,
-                edge_driver_path=args.edge_driver_path
+                edge_driver_path=args.edge_driver_path,
+                output_format=args.format
             )
         else:
             scraper = SubstackScraper(
                 base_substack_url=BASE_SUBSTACK_URL,
                 md_save_dir=args.directory,
-                html_save_dir=args.html_directory
+                html_save_dir=args.html_directory,
+                output_format=args.format
             )
 
     scraper.scrape_posts(num_posts_to_scrape=args.number)
