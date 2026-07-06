@@ -66,6 +66,21 @@ To scrape a specific number of posts:
 python substack_scraper.py --url https://example.substack.com --directory /path/to/save/posts --number 5
 ```
 
+### Output format
+
+By default the scraper writes clean HTML only. HTML is rendered directly from the
+post's content (no Markdown round-trip), so rich embeds such as X/Twitter cards
+stay intact. Use `--format` (`-f`) to choose the output:
+
+```bash
+python substack_scraper.py --url https://example.substack.com --format html   # .html only (default)
+python substack_scraper.py --url https://example.substack.com --format md     # .md only
+python substack_scraper.py --url https://example.substack.com --format both   # both .md and .html
+```
+
+In Markdown output, tweet embeds are rendered as blockquotes (Markdown can't
+reproduce the card), with a link to the tweet.
+
 ## Contributing
 
 Hard fork from [Substack2Markdown](https://github.com/timf34/Substack2Markdown)

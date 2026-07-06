@@ -1,0 +1,26 @@
+---
+- name: Install Redis
+  ansible.builtin.package:
+    name: redis
+    state: present
+
+- name: Install mail service packages
+  ansible.builtin.package:
+    name: "{{ freebsd_opensmptd_mail_packages }}"
+    state: present
+
+- name: Install OpenSMTPD passwd table package or build from source
+  block:
+    - name: Install OpenSMTPD passwd table package
+      ansible.builtin.package:
+        name: "{{ freebsd_opensmptd_table_passwd_package }}"
+        state: present
+  rescue:
+    - name: Build OpenSMTPD passwd table from source after package install failed
+      ansible.builtin.include_tasks: table_passwd_source.yml
+
+- name: Install ClamAV
+  ansible.builtin.package:
+    name: clamav
+    state: present
+  when: freebsd_opensmptd_enable_clamav | bool

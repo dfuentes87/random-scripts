@@ -1,0 +1,67 @@
+---
+- name: Run pre-flight assertions
+  ansible.builtin.include_tasks: asserts.yml
+
+- name: Install packages
+  ansible.builtin.include_tasks: packages.yml
+
+- name: Configure Redis
+  ansible.builtin.include_tasks: redis.yml
+
+- name: Configure OpenSMTPD
+  ansible.builtin.include_tasks: opensmtpd.yml
+
+- name: Configure rspamd
+  ansible.builtin.include_tasks: rspamd.yml
+
+- name: Configure Dovecot
+  ansible.builtin.include_tasks: dovecot.yml
+
+- name: Configure ClamAV
+  ansible.builtin.include_tasks: clamav.yml
+  when: freebsd_opensmptd_enable_clamav | bool
+
+- name: Flush handlers before validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Validate OpenSMTPD configuration
+  ansible.builtin.command:
+    cmd: smtpd -n
+  changed_when: false
+  when: freebsd_opensmptd_validate_configs | bool
+
+- name: Validate rspamd configuration
+  ansible.builtin.command:
+    cmd: rspamadm configtest
+  changed_when: false
+  when: freebsd_opensmptd_validate_configs | bool
+
+- name: Validate Dovecot configuration
+  ansible.builtin.command:
+    cmd: doveconf -n
+  changed_when: false
+  when: freebsd_opensmptd_validate_configs | bool
+
+- name: Enable and start mail services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - rspamd
+    - smtpd
+    - dovecot
+
+- name: Enable and start ClamAV services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - clamav-freshclam
+    - clamav-clamd
+  when: freebsd_opensmptd_enable_clamav | bool
+
+- name: Write DKIM record
+  ansible.builtin.include_tasks: dkim.yml
+  when: freebsd_opensmptd_write_dkim_dns_record | bool

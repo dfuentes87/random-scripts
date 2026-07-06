@@ -1,0 +1,44 @@
+#       $OpenBSD: smtpd.conf,v 1.10 2018/05/24 11:40:17 gilles Exp $
+
+table passwd passwd:/usr/local/etc/mail/passwd
+table virtuals file:/usr/local/etc/mail/virtuals
+
+pki {{ freebsd_opensmptd_hostname }} cert "{{ freebsd_opensmptd_cert_fullchain }}"
+pki {{ freebsd_opensmptd_hostname }} key "{{ freebsd_opensmptd_cert_privkey }}"
+
+filter check_dyndns phase connect match rdns regex { '.*\.dyn\..*', '.*\.dsl\..*' } \
+    disconnect "550 no residential connections - Thou shalt not pass"
+
+filter check_rdns phase connect match !rdns \
+    disconnect "550 no rdns - Thou shalt not pass"
+
+filter check_fcrdns phase connect match !fcrdns \
+    disconnect "550 no FCrDNS - Thou shalt not pass"
+
+filter senderscore \
+    proc-exec "/usr/local/libexec/opensmtpd/opensmtpd-filter-senderscore -blockBelow 10 -junkBelow 70 -slowFactor 5000"
+
+filter rspamd proc-exec "/usr/local/libexec/opensmtpd/opensmtpd-filter-rspamd"
+
+listen on 0.0.0.0 tls pki {{ freebsd_opensmptd_hostname }} \
+    filter { check_dyndns, check_rdns, check_fcrdns, senderscore, rspamd } auth-optional <passwd>
+
+listen on ::0 tls pki {{ freebsd_opensmptd_hostname }} \
+    filter { check_dyndns, check_rdns, check_fcrdns, senderscore, rspamd } auth-optional <passwd>
+
+listen on 0.0.0.0 port submission tls-require pki {{ freebsd_opensmptd_hostname }} auth <passwd> filter rspamd mask-src
+
+listen on ::0 port submission tls-require pki {{ freebsd_opensmptd_hostname }} auth <passwd> filter rspamd mask-src
+
+listen on 0.0.0.0 port 465 smtps pki {{ freebsd_opensmptd_hostname }} auth <passwd> filter rspamd mask-src
+
+listen on ::0 port 465 smtps pki {{ freebsd_opensmptd_hostname }} auth <passwd> filter rspamd mask-src
+
+action "local_mail" lmtp "/var/run/dovecot/lmtp" rcpt-to virtual <virtuals>
+action "outbound" relay helo {{ freebsd_opensmptd_hostname }}
+
+match from any for domain {{ freebsd_opensmptd_domain }} action "local_mail"
+match for local action "local_mail"
+
+match from any auth for any action "outbound"
+match for any action "outbound"

@@ -1,0 +1,7 @@
+DatabaseDirectory /var/db/clamav
+UpdateLogFile /var/log/clamav/freshclam.log
+LogTime yes
+PidFile /var/run/clamav/freshclam.pid
+DatabaseOwner clamav
+DatabaseMirror {{ freebsd_opensmptd_freshclam_database_mirror }}
+NotifyClamd /usr/local/etc/clamd.conf

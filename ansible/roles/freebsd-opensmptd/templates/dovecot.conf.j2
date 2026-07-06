@@ -1,0 +1,14 @@
+protocols = imap lmtp sieve
+
+listen = *, ::
+base_dir = /var/run/dovecot/
+instance_name = dovecot
+
+!include conf.d/10-auth.conf
+!include conf.d/10-mail.conf
+!include conf.d/10-ssl.conf
+!include conf.d/15-mailboxes.conf
+!include conf.d/20-imap.conf
+!include conf.d/20-lmtp.conf
+!include conf.d/20-managesieve.conf.ext
+!include conf.d/90-plugin.conf

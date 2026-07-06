@@ -1,0 +1,13 @@
+LogFile /var/log/clamav/clamd.log
+LogTime yes
+PidFile /var/run/clamav/clamd.pid
+TemporaryDirectory /tmp
+DatabaseDirectory /var/db/clamav
+LocalSocket /var/run/clamav/clamd.sock
+FixStaleSocket yes
+TCPSocket {{ freebsd_opensmptd_clamav_tcp_socket }}
+TCPAddr {{ freebsd_opensmptd_clamav_tcp_addr }}
+User clamav
+ScanMail yes
+ScanArchive yes
+ArchiveBlockEncrypted no
