@@ -34,6 +34,7 @@ STRAY_MARKDOWN_DELIMITER_PATTERN = re.compile(r'(?<=\S)\s+(?:\*\*|__)\s+(?=\S)')
 TWEET_EMBED_SELECTOR = ".twitter-embed"
 TWEET_HANDLE_PATTERN = re.compile(r'(?:x|xcancel)\.com/([^/]+)/status')
 OUTPUT_FORMATS = ("both", "html", "md")
+EXTERNAL_LINK_REL = ("noopener", "noreferrer")
 
 
 class SubstackLoginError(Exception):
@@ -46,6 +47,37 @@ def rewrite_x_links(node) -> None:
     """
     for anchor in node.select("a[href]"):
         anchor["href"] = X_DOMAIN_PATTERN.sub("https://xcancel.com", anchor["href"])
+
+
+def is_offsite_href(href: str) -> bool:
+    """
+    True for hrefs that leave the export. Relative paths (links rewritten to a
+    sibling .html), bare fragments, and mailto:/tel: links are all in-export.
+    """
+    parsed = urlparse(href)
+    if parsed.scheme in {"http", "https"}:
+        return True
+    return not parsed.scheme and bool(parsed.netloc)
+
+
+def set_link_targets(node) -> None:
+    """
+    Opens off-site links in a new tab and keeps in-export navigation in the current
+    one, stripping any inherited target from the latter.
+
+    Decided from the href alone rather than from a stored flag, so it stays correct
+    when ``rewrite_generated_html_links`` later turns an absolute same-blog URL into
+    a local filename -- that link must stop opening in a new tab.
+    """
+    for anchor in node.select("a[href]"):
+        if is_offsite_href(anchor["href"]):
+            anchor["target"] = "_blank"
+            rel = anchor.get("rel") or []
+            if isinstance(rel, str):
+                rel = rel.split()
+            anchor["rel"] = [*rel, *(t for t in EXTERNAL_LINK_REL if t not in rel)]
+        elif "target" in anchor.attrs:
+            del anchor["target"]
 
 
 def clean_content_html(content_node) -> str:
@@ -72,6 +104,7 @@ def clean_content_html(content_node) -> str:
             continue
         marker.wrap(node.new_tag("sup"))
     rewrite_x_links(node)
+    set_link_targets(node)
     return str(node)
 
 
@@ -405,6 +438,7 @@ class BaseSubstackScraper(ABC):
                 fragment = f"#{parsed_href.fragment}" if parsed_href.fragment else ""
                 link["href"] = f"{local_filename}{fragment}"
 
+        set_link_targets(soup)
         return str(soup)
 
     def refresh_existing_html_links(self) -> None:
