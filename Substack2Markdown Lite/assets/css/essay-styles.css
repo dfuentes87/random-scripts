@@ -86,6 +86,36 @@ h6 { font-size: 1em; }
     margin: 0 auto 1em;
 }
 
+/* Embeds (YouTube, Vimeo, etc.) ship with fixed width/height attributes and rely
+   on Substack's own responsive wrapper CSS, which the export doesn't inherit.
+   Left unconstrained they overflow the article column, which also widens the
+   document and triggers mobile Safari's shrink-to-fit on the whole page. */
+.markdown-content iframe,
+.markdown-content video,
+.markdown-content embed,
+.markdown-content object {
+    display: block;
+    max-width: 100%;
+    margin: 0 auto 1em;
+    border: 0;
+}
+
+.markdown-content .youtube-wrap {
+    max-width: 728px;
+    margin: 1.5em auto;
+}
+
+/* Video iframes: fill the column and derive height from the 16:9 ratio, so the
+   fixed height attribute (409 for Substack's 728-wide embeds) can't letterbox. */
+.markdown-content .youtube-wrap iframe,
+.markdown-content iframe[src*="youtube"],
+.markdown-content iframe[src*="youtu.be"],
+.markdown-content iframe[src*="vimeo"] {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+}
+
 .markdown-content table {
     border-collapse: collapse;
     margin: 0 auto 1em;
