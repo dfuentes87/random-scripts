@@ -450,9 +450,13 @@ class BaseSubstackScraper(ABC):
         return markdown.markdown(md_content, extensions=['extra'])
 
 
-    def save_to_html_file(self, filepath: str, content: str) -> None:
+    def save_to_html_file(self, filepath: str, content: str, title: str = "") -> None:
         """
         This method saves HTML content to a file with a link to an external CSS file.
+
+        ``title`` becomes the document <title> (browser tab, bookmark name, and what
+        most readers use as the share title); it falls back to the filename stem when
+        a post has no usable title.
         """
         if not isinstance(filepath, str):
             raise TypeError("filepath must be a string")
@@ -460,9 +464,14 @@ class BaseSubstackScraper(ABC):
         if not isinstance(content, str):
             raise TypeError("content must be a string")
 
+        if not isinstance(title, str):
+            raise TypeError("title must be a string")
+
         html_dir = os.path.dirname(filepath)
         css_path = os.path.relpath("./assets/css/essay-styles.css", html_dir)
         css_path = css_path.replace("\\", "/")
+
+        page_title = title.strip() or os.path.splitext(os.path.basename(filepath))[0]
 
         html_content = f"""
             <!DOCTYPE html>
@@ -470,7 +479,7 @@ class BaseSubstackScraper(ABC):
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Markdown Content</title>
+                <title>{escape(page_title)}</title>
                 <link rel="stylesheet" href="{css_path}">
             </head>
             <body>
@@ -652,7 +661,11 @@ class BaseSubstackScraper(ABC):
                         self.save_to_file(md_filepath, self.build_markdown(title, subtitle, date, content_node))
 
                     if need_html:
-                        self.save_to_html_file(html_filepath, self.build_html(title, subtitle, date, content_node))
+                        self.save_to_html_file(
+                            html_filepath,
+                            self.build_html(title, subtitle, date, content_node),
+                            title=title,
+                        )
 
                     essay = {"title": title, "subtitle": subtitle, "date": date, "url": url}
                     if want_md and os.path.exists(md_filepath):
