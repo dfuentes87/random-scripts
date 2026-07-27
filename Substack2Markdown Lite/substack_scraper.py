@@ -4,23 +4,21 @@ import os
 import re
 from abc import ABC, abstractmethod
 from html import escape
-from typing import List, Optional, Tuple
 from time import sleep
 from urllib.parse import urljoin, urlparse, urlunparse
+from xml.etree import ElementTree as ET
 
-from bs4 import BeautifulSoup
 import html2text
 import markdown
 import requests
-from tqdm import tqdm
-from xml.etree import ElementTree as ET
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from webdriver_manager.microsoft import EdgeChromiumDriverManager
-from selenium.webdriver.edge.options import Options as EdgeOptions
-from selenium.webdriver.chrome.service import Service
+from bs4 import BeautifulSoup
 from config import EMAIL, PASSWORD
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from tqdm import tqdm
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
 USE_PREMIUM: bool = False
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"
@@ -36,6 +34,11 @@ STRAY_MARKDOWN_DELIMITER_PATTERN = re.compile(r'(?<=\S)\s+(?:\*\*|__)\s+(?=\S)')
 TWEET_EMBED_SELECTOR = ".twitter-embed"
 TWEET_HANDLE_PATTERN = re.compile(r'(?:x|xcancel)\.com/([^/]+)/status')
 OUTPUT_FORMATS = ("both", "html", "md")
+EXTERNAL_LINK_REL = ("noopener", "noreferrer")
+
+
+class SubstackLoginError(Exception):
+    """Raised when the premium scraper cannot log in to Substack."""
 
 
 def rewrite_x_links(node) -> None:
@@ -44,6 +47,37 @@ def rewrite_x_links(node) -> None:
     """
     for anchor in node.select("a[href]"):
         anchor["href"] = X_DOMAIN_PATTERN.sub("https://xcancel.com", anchor["href"])
+
+
+def is_offsite_href(href: str) -> bool:
+    """
+    True for hrefs that leave the export. Relative paths (links rewritten to a
+    sibling .html), bare fragments, and mailto:/tel: links are all in-export.
+    """
+    parsed = urlparse(href)
+    if parsed.scheme in {"http", "https"}:
+        return True
+    return not parsed.scheme and bool(parsed.netloc)
+
+
+def set_link_targets(node) -> None:
+    """
+    Opens off-site links in a new tab and keeps in-export navigation in the current
+    one, stripping any inherited target from the latter.
+
+    Decided from the href alone rather than from a stored flag, so it stays correct
+    when ``rewrite_generated_html_links`` later turns an absolute same-blog URL into
+    a local filename -- that link must stop opening in a new tab.
+    """
+    for anchor in node.select("a[href]"):
+        if is_offsite_href(anchor["href"]):
+            anchor["target"] = "_blank"
+            rel = anchor.get("rel") or []
+            if isinstance(rel, str):
+                rel = rel.split()
+            anchor["rel"] = [*rel, *(t for t in EXTERNAL_LINK_REL if t not in rel)]
+        elif "target" in anchor.attrs:
+            del anchor["target"]
 
 
 def clean_content_html(content_node) -> str:
@@ -70,10 +104,11 @@ def clean_content_html(content_node) -> str:
             continue
         marker.wrap(node.new_tag("sup"))
     rewrite_x_links(node)
+    set_link_targets(node)
     return str(node)
 
 
-def _tweet_person(container, url: str = "") -> Tuple[str, str]:
+def _tweet_person(container, url: str = "") -> tuple[str, str]:
     """
     Extracts (display name, handle) from a tweet header/quoted-tweet container.
     """
@@ -98,7 +133,7 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"[ \t]*\n[ \t]*", "\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
-def _tweet_footer_parts(footer) -> Tuple[str, str]:
+def _tweet_footer_parts(footer) -> tuple[str, str]:
     """
     Splits a tweet footer into ("timestamp - views" meta, "replies - reposts - likes" stats).
     """
@@ -184,7 +219,9 @@ def simplify_tweets_for_markdown(content_node) -> str:
         url = X_DOMAIN_PATTERN.sub("https://xcancel.com", raw_href)
         try:
             replacement = _tweet_blockquote(node, embed, url)
-        except Exception:
+        # The traversal assumes Substack's header/body/footer shape; a markup change
+        # surfaces as a missing child, a missing attribute, or a non-Tag node.
+        except (AttributeError, IndexError, KeyError, TypeError):
             replacement = node.new_tag("blockquote")
             paragraph = node.new_tag("p")
             link = node.new_tag("a", href=url or "#")
@@ -251,14 +288,14 @@ class BaseSubstackScraper(ABC):
             os.makedirs(self.html_save_dir)
             print(f"Created html directory {self.html_save_dir}")
 
-        self.keywords: List[str] = ["about", "archive", "podcast"]
-        self.post_urls: List[str] = self.get_all_post_urls()
+        self.keywords: list[str] = ["about", "archive", "podcast"]
+        self.post_urls: list[str] = self.get_all_post_urls()
         self.post_url_map = {
             self.normalize_post_url(url): self.get_filename_from_url(url, filetype=".html")
             for url in self.post_urls
         }
 
-    def get_all_post_urls(self) -> List[str]:
+    def get_all_post_urls(self) -> list[str]:
         """
         Attempts to fetch URLs from sitemap.xml, falling back to feed.xml if necessary.
         """
@@ -267,7 +304,7 @@ class BaseSubstackScraper(ABC):
             urls = self.fetch_urls_from_feed()
         return self.filter_urls(urls, self.keywords)
 
-    def fetch_urls_from_sitemap(self) -> List[str]:
+    def fetch_urls_from_sitemap(self) -> list[str]:
         """
         Fetches URLs from sitemap.xml.
         """
@@ -282,7 +319,7 @@ class BaseSubstackScraper(ABC):
         urls = [element.text for element in root.iter('{http://www.sitemaps.org/schemas/sitemap/0.9}loc')]
         return urls
 
-    def fetch_urls_from_feed(self) -> List[str]:
+    def fetch_urls_from_feed(self) -> list[str]:
         """
         Fetches URLs from feed.xml.
         """
@@ -304,7 +341,7 @@ class BaseSubstackScraper(ABC):
         return urls
 
     @staticmethod
-    def filter_urls(urls: List[str], keywords: List[str]) -> List[str]:
+    def filter_urls(urls: list[str], keywords: list[str]) -> list[str]:
         """
         This method filters out URLs that contain certain keywords
         """
@@ -316,7 +353,7 @@ class BaseSubstackScraper(ABC):
         This method converts HTML to Markdown
         """
         if not isinstance(html_content, str):
-            raise ValueError("html_content must be a string")
+            raise TypeError("html_content must be a string")
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.body_width = 0
@@ -329,7 +366,7 @@ class BaseSubstackScraper(ABC):
         Applies post-processing fixes to markdown emitted by html2text.
         """
         if not isinstance(md_content, str):
-            raise ValueError("md_content must be a string")
+            raise TypeError("md_content must be a string")
 
         md_content = STRAY_MARKDOWN_DELIMITER_PATTERN.sub(' ', md_content)
         return X_DOMAIN_PATTERN.sub('https://xcancel.com', md_content)
@@ -337,7 +374,7 @@ class BaseSubstackScraper(ABC):
     @staticmethod
     def normalize_hostname(url: str) -> str:
         hostname = urlparse(url).netloc.lower()
-        return hostname[4:] if hostname.startswith("www.") else hostname
+        return hostname.removeprefix("www.")
 
     @staticmethod
     def normalize_post_url(url: str) -> str:
@@ -355,13 +392,13 @@ class BaseSubstackScraper(ABC):
     def get_local_html_path(self, filename: str) -> str:
         return os.path.join(self.html_save_dir, filename)
 
-    def get_existing_local_html_filename(self, url: str) -> Optional[str]:
+    def get_existing_local_html_filename(self, url: str) -> str | None:
         filename = self.post_url_map.get(self.normalize_post_url(url))
         if filename and os.path.exists(self.get_local_html_path(filename)):
             return filename
         return None
 
-    def resolve_same_blog_link(self, href: str, source_url: str) -> Optional[str]:
+    def resolve_same_blog_link(self, href: str, source_url: str) -> str | None:
         if not href or href.startswith("#"):
             return None
 
@@ -401,6 +438,7 @@ class BaseSubstackScraper(ABC):
                 fragment = f"#{parsed_href.fragment}" if parsed_href.fragment else ""
                 link["href"] = f"{local_filename}{fragment}"
 
+        set_link_targets(soup)
         return str(soup)
 
     def refresh_existing_html_links(self) -> None:
@@ -426,10 +464,10 @@ class BaseSubstackScraper(ABC):
         This method saves content to a file. Can be used to save HTML or Markdown
         """
         if not isinstance(filepath, str):
-            raise ValueError("filepath must be a string")
+            raise TypeError("filepath must be a string")
 
         if not isinstance(content, str):
-            raise ValueError("content must be a string")
+            raise TypeError("content must be a string")
 
         if os.path.exists(filepath):
             print(f"File already exists: {filepath}")
@@ -446,19 +484,28 @@ class BaseSubstackScraper(ABC):
         return markdown.markdown(md_content, extensions=['extra'])
 
 
-    def save_to_html_file(self, filepath: str, content: str) -> None:
+    def save_to_html_file(self, filepath: str, content: str, title: str = "") -> None:
         """
         This method saves HTML content to a file with a link to an external CSS file.
+
+        ``title`` becomes the document <title> (browser tab, bookmark name, and what
+        most readers use as the share title); it falls back to the filename stem when
+        a post has no usable title.
         """
         if not isinstance(filepath, str):
-            raise ValueError("filepath must be a string")
+            raise TypeError("filepath must be a string")
 
         if not isinstance(content, str):
-            raise ValueError("content must be a string")
+            raise TypeError("content must be a string")
+
+        if not isinstance(title, str):
+            raise TypeError("title must be a string")
 
         html_dir = os.path.dirname(filepath)
         css_path = os.path.relpath("./assets/css/essay-styles.css", html_dir)
         css_path = css_path.replace("\\", "/")
+
+        page_title = title.strip() or os.path.splitext(os.path.basename(filepath))[0]
 
         html_content = f"""
             <!DOCTYPE html>
@@ -466,7 +513,7 @@ class BaseSubstackScraper(ABC):
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Markdown Content</title>
+                <title>{escape(page_title)}</title>
                 <link rel="stylesheet" href="{css_path}">
             </head>
             <body>
@@ -486,10 +533,10 @@ class BaseSubstackScraper(ABC):
         Gets the filename from the URL (the ending)
         """
         if not isinstance(url, str):
-            raise ValueError("url must be a string")
+            raise TypeError("url must be a string")
 
         if not isinstance(filetype, str):
-            raise ValueError("filetype must be a string")
+            raise TypeError("filetype must be a string")
 
         if not filetype.startswith("."):
             filetype = f".{filetype}"
@@ -502,10 +549,10 @@ class BaseSubstackScraper(ABC):
         Combines the title, subtitle, and content into a single string with Markdown format
         """
         if not isinstance(title, str):
-            raise ValueError("title must be a string")
+            raise TypeError("title must be a string")
 
         if not isinstance(content, str):
-            raise ValueError("content must be a string")
+            raise TypeError("content must be a string")
 
         metadata = f"# {title}\n\n"
         if subtitle:
@@ -521,10 +568,10 @@ class BaseSubstackScraper(ABC):
         Used by the direct HTML path (no markdown round-trip).
         """
         if not isinstance(title, str):
-            raise ValueError("title must be a string")
+            raise TypeError("title must be a string")
 
         if not isinstance(html_body, str):
-            raise ValueError("html_body must be a string")
+            raise TypeError("html_body must be a string")
 
         parts = [f"<h1>{escape(title)}</h1>"]
         if subtitle:
@@ -533,7 +580,7 @@ class BaseSubstackScraper(ABC):
         parts.append(html_body)
         return "\n".join(parts)
 
-    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> Tuple[str, str, str, BeautifulSoup]:
+    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> tuple[str, str, str, BeautifulSoup]:
         """
         Extracts post metadata and the sanitized content node.
 
@@ -648,7 +695,11 @@ class BaseSubstackScraper(ABC):
                         self.save_to_file(md_filepath, self.build_markdown(title, subtitle, date, content_node))
 
                     if need_html:
-                        self.save_to_html_file(html_filepath, self.build_html(title, subtitle, date, content_node))
+                        self.save_to_html_file(
+                            html_filepath,
+                            self.build_html(title, subtitle, date, content_node),
+                            title=title,
+                        )
 
                     essay = {"title": title, "subtitle": subtitle, "date": date, "url": url}
                     if want_md and os.path.exists(md_filepath):
@@ -661,7 +712,9 @@ class BaseSubstackScraper(ABC):
                     essays_data.append(essay)
                 else:
                     print(f"File already exists: {md_filepath if want_md else html_filepath}")
-            except Exception as e:
+            # Deliberately broad: one unreachable/malformed post must not abort a
+            # scrape of several hundred. Network, parse, and I/O errors all land here.
+            except Exception as e:  # noqa: BLE001
                 print(f"Error scraping post: {e}")
             count += 1
             if num_posts_to_scrape != 0 and count == num_posts_to_scrape:
@@ -675,7 +728,7 @@ class SubstackScraper(BaseSubstackScraper):
     def __init__(self, base_substack_url: str, md_save_dir: str, html_save_dir: str, output_format: str = "html"):
         super().__init__(base_substack_url, md_save_dir, html_save_dir, output_format)
 
-    def get_url_soup(self, url: str) -> Optional[BeautifulSoup]:
+    def get_url_soup(self, url: str) -> BeautifulSoup | None:
         """
         Gets soup from URL using requests
         """
@@ -743,7 +796,7 @@ class PremiumSubstackScraper(BaseSubstackScraper):
         sleep(30)
 
         if self.is_login_failed():
-            raise Exception(
+            raise SubstackLoginError(
                 "Warning: Login unsuccessful. Please check your email and password, or your account status.\n"
                 "Use the non-premium scraper for the non-paid posts. \n"
                 "If running headless, run non-headlessly to see if blocked by Captcha."
