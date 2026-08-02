@@ -640,6 +640,140 @@ class BaseSubstackScraper(ABC):
     def get_url_soup(self, url: str) -> str:
         raise NotImplementedError
 
+    def load_indexed_post_urls(self) -> set[str]:
+        """
+        Returns the normalized URLs already listed in the author's JSON index.
+
+        That index is the only thing the browse page is built from, so a post whose
+        files are on disk but whose entry is missing would otherwise be skipped by the
+        "already exists" check on every future run and never regain a link.
+        """
+        json_path = os.path.join(JSON_DATA_DIR, f'{self.writer_name}.json')
+        if not os.path.exists(json_path):
+            return set()
+
+        try:
+            with open(json_path, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Could not read existing index at {json_path}, rebuilding it: {e}")
+            return set()
+
+        if not isinstance(data, list):
+            return set()
+
+        return {
+            self.normalize_post_url(item["url"])
+            for item in data
+            if isinstance(item, dict) and item.get("url")
+        }
+
+    @staticmethod
+    def parse_saved_html_metadata(filepath: str) -> tuple[str, str, str] | None:
+        """
+        Recovers (title, subtitle, date) from a post page this scraper wrote.
+
+        ``save_to_html_file`` emits the header as the first direct children of
+        <main>: an <h1>, an optional <h3>, then <p><strong>date</strong></p>. Walking
+        those in order (rather than selecting by tag name anywhere in the document)
+        avoids mistaking an <h3> from the post body for the subtitle.
+        """
+        with open(filepath, 'r', encoding='utf-8') as file:
+            soup = BeautifulSoup(file.read(), "html.parser")
+
+        main = soup.select_one("main.markdown-content")
+        if main is None:
+            return None
+
+        nodes = [child for child in main.children if getattr(child, "name", None)]
+        if not nodes or nodes[0].name != "h1":
+            return None
+
+        title = nodes[0].get_text(strip=True)
+        nodes = nodes[1:]
+
+        subtitle = ""
+        if nodes and nodes[0].name == "h3":
+            subtitle = nodes[0].get_text(strip=True)
+            nodes = nodes[1:]
+
+        date = ""
+        if nodes and nodes[0].name == "p":
+            strong = nodes[0].find("strong")
+            if strong is not None:
+                date = strong.get_text(strip=True)
+
+        return title, subtitle, date
+
+    @staticmethod
+    def parse_saved_markdown_metadata(filepath: str) -> tuple[str, str, str] | None:
+        """
+        Recovers (title, subtitle, date) from a post markdown file this scraper wrote.
+
+        Mirrors the header ``combine_metadata_and_content`` produces: "# title", an
+        optional "## subtitle", then "**date**".
+        """
+        blocks: list[str] = []
+        with open(filepath, 'r', encoding='utf-8') as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if line:
+                    blocks.append(line)
+                if len(blocks) == 3:
+                    break
+
+        if not blocks or not blocks[0].startswith("# "):
+            return None
+
+        title = blocks[0][2:].strip()
+        blocks = blocks[1:]
+
+        subtitle = ""
+        if blocks and blocks[0].startswith("## "):
+            subtitle = blocks[0][3:].strip()
+            blocks = blocks[1:]
+
+        date = ""
+        if blocks:
+            match = re.fullmatch(r"\*\*(.+)\*\*", blocks[0])
+            if match:
+                date = match.group(1)
+
+        return title, subtitle, date
+
+    def build_essay_record(
+        self, title: str, subtitle: str, date: str, url: str, md_filepath: str, html_filepath: str
+    ) -> dict:
+        """
+        Builds one browse-index entry, pointing at whichever files actually exist.
+        """
+        essay = {"title": title, "subtitle": subtitle, "date": date, "url": url}
+        if self.output_format in ("md", "both") and os.path.exists(md_filepath):
+            essay["md_link"] = md_filepath
+        if self.output_format in ("html", "both") and os.path.exists(html_filepath):
+            essay["html_link"] = html_filepath
+        # The browse index links via html_link; fall back to the markdown
+        # file when only markdown was produced.
+        essay.setdefault("html_link", essay.get("md_link", md_filepath))
+        return essay
+
+    def recover_essay_from_disk(self, url: str, md_filepath: str, html_filepath: str) -> dict:
+        """
+        Rebuilds an index entry for a post already saved locally, without re-fetching it.
+        """
+        metadata = None
+        if os.path.exists(html_filepath):
+            metadata = self.parse_saved_html_metadata(html_filepath)
+        if metadata is None and os.path.exists(md_filepath):
+            metadata = self.parse_saved_markdown_metadata(md_filepath)
+        if metadata is None:
+            # A link with a slug-derived title still beats a page nothing points to.
+            slug = os.path.splitext(os.path.basename(html_filepath))[0]
+            metadata = (slug.replace("-", " ").strip() or slug, "", "")
+
+        title, subtitle, date = metadata
+        return self.build_essay_record(title, subtitle, date, url, md_filepath, html_filepath)
+
     def save_essays_data_to_json(self, essays_data: list) -> None:
         """
         Saves essays data to a JSON file for a specific author.
@@ -673,55 +807,64 @@ class BaseSubstackScraper(ABC):
         count = 0
         want_md = self.output_format in ("md", "both")
         want_html = self.output_format in ("html", "both")
+        indexed_urls = self.load_indexed_post_urls()
         total = num_posts_to_scrape if num_posts_to_scrape != 0 else len(self.post_urls)
-        for url in tqdm(self.post_urls, total=total):
-            try:
-                md_filename = self.get_filename_from_url(url, filetype=".md")
-                html_filename = self.get_filename_from_url(url, filetype=".html")
-                md_filepath = os.path.join(self.md_save_dir, md_filename)
-                html_filepath = os.path.join(self.html_save_dir, html_filename)
+        try:
+            for url in tqdm(self.post_urls, total=total):
+                try:
+                    md_filename = self.get_filename_from_url(url, filetype=".md")
+                    html_filename = self.get_filename_from_url(url, filetype=".html")
+                    md_filepath = os.path.join(self.md_save_dir, md_filename)
+                    html_filepath = os.path.join(self.html_save_dir, html_filename)
 
-                need_md = want_md and not os.path.exists(md_filepath)
-                need_html = want_html and not os.path.exists(html_filepath)
+                    need_md = want_md and not os.path.exists(md_filepath)
+                    need_html = want_html and not os.path.exists(html_filepath)
 
-                if need_md or need_html:
-                    soup = self.get_url_soup(url)
-                    if soup is None:
-                        total += 1
-                        continue
-                    title, subtitle, date, content_node = self.extract_post_data(soup, url)
+                    if need_md or need_html:
+                        soup = self.get_url_soup(url)
+                        if soup is None:
+                            total += 1
+                            continue
+                        title, subtitle, date, content_node = self.extract_post_data(soup, url)
 
-                    if need_md:
-                        self.save_to_file(md_filepath, self.build_markdown(title, subtitle, date, content_node))
+                        if need_md:
+                            self.save_to_file(md_filepath, self.build_markdown(title, subtitle, date, content_node))
 
-                    if need_html:
-                        self.save_to_html_file(
-                            html_filepath,
-                            self.build_html(title, subtitle, date, content_node),
-                            title=title,
+                        if need_html:
+                            self.save_to_html_file(
+                                html_filepath,
+                                self.build_html(title, subtitle, date, content_node),
+                                title=title,
+                            )
+
+                        essays_data.append(
+                            self.build_essay_record(title, subtitle, date, url, md_filepath, html_filepath)
                         )
-
-                    essay = {"title": title, "subtitle": subtitle, "date": date, "url": url}
-                    if want_md and os.path.exists(md_filepath):
-                        essay["md_link"] = md_filepath
-                    if want_html and os.path.exists(html_filepath):
-                        essay["html_link"] = html_filepath
-                    # The browse index links via html_link; fall back to the markdown
-                    # file when only markdown was produced.
-                    essay.setdefault("html_link", essay.get("md_link", md_filepath))
-                    essays_data.append(essay)
-                else:
-                    print(f"File already exists: {md_filepath if want_md else html_filepath}")
-            # Deliberately broad: one unreachable/malformed post must not abort a
-            # scrape of several hundred. Network, parse, and I/O errors all land here.
-            except Exception as e:  # noqa: BLE001
-                print(f"Error scraping post: {e}")
-            count += 1
-            if num_posts_to_scrape != 0 and count == num_posts_to_scrape:
-                break
-        self.refresh_existing_html_links()
-        self.save_essays_data_to_json(essays_data=essays_data)
-        generate_html_file(author_name=self.writer_name)
+                    elif self.normalize_post_url(url) not in indexed_urls:
+                        # The files are on disk but the browse index has no entry for
+                        # them (e.g. an earlier run died before writing it). Without
+                        # this the "already exists" branch would skip the post forever
+                        # and the page would stay unreachable from the index.
+                        print(f"Backfilling index entry: {html_filepath if want_html else md_filepath}")
+                        essays_data.append(self.recover_essay_from_disk(url, md_filepath, html_filepath))
+                    else:
+                        print(f"File already exists: {md_filepath if want_md else html_filepath}")
+                # Deliberately broad: one unreachable/malformed post must not abort a
+                # scrape of several hundred. Network, parse, and I/O errors all land here.
+                except Exception as e:  # noqa: BLE001
+                    print(f"Error scraping post: {e}")
+                count += 1
+                if num_posts_to_scrape != 0 and count == num_posts_to_scrape:
+                    break
+        finally:
+            # Runs even on Ctrl-C: pages already written must not be left out of the
+            # index, since the "already exists" check would skip them next time.
+            try:
+                self.refresh_existing_html_links()
+            except OSError as e:
+                print(f"Error refreshing links in existing HTML files: {e}")
+            self.save_essays_data_to_json(essays_data=essays_data)
+            generate_html_file(author_name=self.writer_name)
 
 
 class SubstackScraper(BaseSubstackScraper):
