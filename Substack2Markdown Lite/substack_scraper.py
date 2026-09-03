@@ -22,6 +22,7 @@ from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
 USE_PREMIUM: bool = False
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"
+REWRITE_X_TO_XCANCEL: bool = False
 
 ### DO NOT EDIT BELOW THIS LINE ###
 
@@ -45,6 +46,8 @@ def rewrite_x_links(node) -> None:
     """
     Rewrites x.com anchor hrefs to their xcancel.com mirror in place.
     """
+    if not REWRITE_X_TO_XCANCEL:
+        return
     for anchor in node.select("a[href]"):
         anchor["href"] = X_DOMAIN_PATTERN.sub("https://xcancel.com", anchor["href"])
 
@@ -216,7 +219,7 @@ def simplify_tweets_for_markdown(content_node) -> str:
         anchor = embed.find_parent("a")
         target = anchor if anchor is not None else embed
         raw_href = anchor.get("href", "") if anchor is not None else ""
-        url = X_DOMAIN_PATTERN.sub("https://xcancel.com", raw_href)
+        url = X_DOMAIN_PATTERN.sub("https://xcancel.com", raw_href) if REWRITE_X_TO_XCANCEL else raw_href
         try:
             replacement = _tweet_blockquote(node, embed, url)
         # The traversal assumes Substack's header/body/footer shape; a markup change
@@ -369,7 +372,7 @@ class BaseSubstackScraper(ABC):
             raise TypeError("md_content must be a string")
 
         md_content = STRAY_MARKDOWN_DELIMITER_PATTERN.sub(' ', md_content)
-        return X_DOMAIN_PATTERN.sub('https://xcancel.com', md_content)
+        return X_DOMAIN_PATTERN.sub('https://xcancel.com', md_content) if REWRITE_X_TO_XCANCEL else md_content
 
     @staticmethod
     def normalize_hostname(url: str) -> str:
