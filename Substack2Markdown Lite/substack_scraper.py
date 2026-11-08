@@ -11,18 +11,20 @@ from xml.etree import ElementTree as ET
 import html2text
 import markdown
 import requests
-from bs4 import BeautifulSoup
-from config import EMAIL, PASSWORD
+from bs4 import BeautifulSoup, Tag
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service
 from tqdm import tqdm
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
+from config import EMAIL, PASSWORD
+
 USE_PREMIUM: bool = False
 BASE_SUBSTACK_URL: str = "https://www.astralcodexten.com/"
-REWRITE_X_TO_XCANCEL: bool = False
+REWRITE_X_TO_XREDIRECT: bool = False
+X_MIRROR_URL: str = "https://nitter.netbub.com"
 
 ### DO NOT EDIT BELOW THIS LINE ###
 
@@ -33,7 +35,7 @@ JSON_DATA_DIR: str = "data"
 X_DOMAIN_PATTERN = re.compile(r'https?://(?:www\.)?x\.com(?=[/?#\s]|$)')
 STRAY_MARKDOWN_DELIMITER_PATTERN = re.compile(r'(?<=\S)\s+(?:\*\*|__)\s+(?=\S)')
 TWEET_EMBED_SELECTOR = ".twitter-embed"
-TWEET_HANDLE_PATTERN = re.compile(r'(?:x|xcancel)\.com/([^/]+)/status')
+TWEET_HANDLE_PATTERN = re.compile(rf'(?:x\.com|{re.escape(urlparse(X_MIRROR_URL).netloc)})/([^/]+)/status')
 OUTPUT_FORMATS = ("both", "html", "md")
 EXTERNAL_LINK_REL = ("noopener", "noreferrer")
 
@@ -44,12 +46,12 @@ class SubstackLoginError(Exception):
 
 def rewrite_x_links(node) -> None:
     """
-    Rewrites x.com anchor hrefs to their xcancel.com mirror in place.
+    Rewrites x.com anchor hrefs to X_MIRROR_URL in place.
     """
-    if not REWRITE_X_TO_XCANCEL:
+    if not REWRITE_X_TO_XREDIRECT:
         return
     for anchor in node.select("a[href]"):
-        anchor["href"] = X_DOMAIN_PATTERN.sub("https://xcancel.com", anchor["href"])
+        anchor["href"] = X_DOMAIN_PATTERN.sub(X_MIRROR_URL, anchor["href"])
 
 
 def is_offsite_href(href: str) -> bool:
@@ -95,9 +97,10 @@ def clean_content_html(content_node) -> str:
     for tag in node.select("script, style, button"):
         tag.decompose()
     # Drop Substack's React hydration blobs (they also leak the original x.com URL).
-    for tag in node.find_all(attrs={"data-attrs": True}):
+    # bs4 stubs wrongly reject attrs=; valid at runtime.
+    for tag in node.find_all(attrs={"data-attrs": True}):  # pyright: ignore[reportArgumentType]
         del tag["data-attrs"]
-    for tag in node.find_all(attrs={"data-component-name": True}):
+    for tag in node.find_all(attrs={"data-component-name": True}):  # pyright: ignore[reportArgumentType]
         del tag["data-component-name"]
     # Render footnote reference markers as real superscripts. Substack styles these
     # via its own CSS (which the export doesn't inherit); wrapping in <sup> makes them
@@ -218,8 +221,8 @@ def simplify_tweets_for_markdown(content_node) -> str:
     for embed in node.select(TWEET_EMBED_SELECTOR):
         anchor = embed.find_parent("a")
         target = anchor if anchor is not None else embed
-        raw_href = anchor.get("href", "") if anchor is not None else ""
-        url = X_DOMAIN_PATTERN.sub("https://xcancel.com", raw_href) if REWRITE_X_TO_XCANCEL else raw_href
+        raw_href: str = anchor.get("href", "") if anchor is not None else ""  # pyright: ignore[reportAssignmentType]  # bs4 stubs: href is never multi-valued
+        url = X_DOMAIN_PATTERN.sub(X_MIRROR_URL, raw_href) if REWRITE_X_TO_XREDIRECT else raw_href
         try:
             replacement = _tweet_blockquote(node, embed, url)
         # The traversal assumes Substack's header/body/footer shape; a markup change
@@ -319,7 +322,11 @@ class BaseSubstackScraper(ABC):
             return []
 
         root = ET.fromstring(response.content)
-        urls = [element.text for element in root.iter('{http://www.sitemaps.org/schemas/sitemap/0.9}loc')]
+        urls = [
+            element.text
+            for element in root.iter('{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
+            if element.text
+        ]
         return urls
 
     def fetch_urls_from_feed(self) -> list[str]:
@@ -372,7 +379,7 @@ class BaseSubstackScraper(ABC):
             raise TypeError("md_content must be a string")
 
         md_content = STRAY_MARKDOWN_DELIMITER_PATTERN.sub(' ', md_content)
-        return X_DOMAIN_PATTERN.sub('https://xcancel.com', md_content) if REWRITE_X_TO_XCANCEL else md_content
+        return X_DOMAIN_PATTERN.sub(X_MIRROR_URL, md_content) if REWRITE_X_TO_XREDIRECT else md_content
 
     @staticmethod
     def normalize_hostname(url: str) -> str:
@@ -421,9 +428,9 @@ class BaseSubstackScraper(ABC):
 
         return resolved_url
 
-    def rewrite_source_links(self, content_node: BeautifulSoup, source_url: str) -> None:
+    def rewrite_source_links(self, content_node: Tag, source_url: str) -> None:
         for link in content_node.select("a[href]"):
-            rewritten_href = self.resolve_same_blog_link(link["href"], source_url)
+            rewritten_href = self.resolve_same_blog_link(link["href"], source_url)  # pyright: ignore[reportArgumentType]  # bs4 stubs: href is never multi-valued
             if rewritten_href:
                 link["href"] = rewritten_href
 
@@ -431,7 +438,7 @@ class BaseSubstackScraper(ABC):
         soup = BeautifulSoup(html_content, "html.parser")
 
         for link in soup.select("a[href]"):
-            href = link["href"]
+            href: str = link["href"]  # pyright: ignore[reportAssignmentType]  # bs4 stubs: href is never multi-valued
             parsed_href = urlparse(href)
             if parsed_href.scheme not in {"http", "https"}:
                 continue
@@ -583,7 +590,7 @@ class BaseSubstackScraper(ABC):
         parts.append(html_body)
         return "\n".join(parts)
 
-    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> tuple[str, str, str, BeautifulSoup]:
+    def extract_post_data(self, soup: BeautifulSoup, source_url: str) -> tuple[str, str, str, Tag]:
         """
         Extracts post metadata and the sanitized content node.
 
@@ -596,7 +603,7 @@ class BaseSubstackScraper(ABC):
 
         if ld_json_tag:
             try:
-                data = json.loads(ld_json_tag.string)
+                data = json.loads(ld_json_tag.string or "")
                 if isinstance(data, dict) and "datePublished" in data:
                     date_published = data["datePublished"]
                 elif isinstance(data, list):
@@ -612,7 +619,10 @@ class BaseSubstackScraper(ABC):
 
         date = date_published
 
-        title = soup.select_one("h1.post-title, h2").text.strip()
+        title_element = soup.select_one("h1.post-title, h2")
+        if title_element is None:
+            raise ValueError("Post title not found")
+        title = title_element.text.strip()
 
         subtitle_element = soup.select_one("h3.subtitle")
         subtitle = subtitle_element.text.strip() if subtitle_element else ""
@@ -640,7 +650,7 @@ class BaseSubstackScraper(ABC):
         return self.rewrite_generated_html_links(html_doc)
 
     @abstractmethod
-    def get_url_soup(self, url: str) -> str:
+    def get_url_soup(self, url: str) -> BeautifulSoup | None:
         raise NotImplementedError
 
     def load_indexed_post_urls(self) -> set[str]:
@@ -688,7 +698,8 @@ class BaseSubstackScraper(ABC):
         if main is None:
             return None
 
-        nodes = [child for child in main.children if getattr(child, "name", None)]
+        # bs4 stubs: the getattr filter leaves only Tags, which pyright can't infer.
+        nodes: list[Tag] = [child for child in main.children if getattr(child, "name", None)]  # pyright: ignore[reportAssignmentType]
         if not nodes or nodes[0].name != "h1":
             return None
 
@@ -746,7 +757,7 @@ class BaseSubstackScraper(ABC):
 
     def build_essay_record(
         self, title: str, subtitle: str, date: str, url: str, md_filepath: str, html_filepath: str
-    ) -> dict:
+    ) -> dict[str, str]:
         """
         Builds one browse-index entry, pointing at whichever files actually exist.
         """
@@ -760,7 +771,7 @@ class BaseSubstackScraper(ABC):
         essay.setdefault("html_link", essay.get("md_link", md_filepath))
         return essay
 
-    def recover_essay_from_disk(self, url: str, md_filepath: str, html_filepath: str) -> dict:
+    def recover_essay_from_disk(self, url: str, md_filepath: str, html_filepath: str) -> dict[str, str]:
         """
         Rebuilds an index entry for a post already saved locally, without re-fetching it.
         """
@@ -777,7 +788,7 @@ class BaseSubstackScraper(ABC):
         title, subtitle, date = metadata
         return self.build_essay_record(title, subtitle, date, url, md_filepath, html_filepath)
 
-    def save_essays_data_to_json(self, essays_data: list) -> None:
+    def save_essays_data_to_json(self, essays_data: list[dict[str, str]]) -> None:
         """
         Saves essays data to a JSON file for a specific author.
         """
