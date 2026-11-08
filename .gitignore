@@ -3,17 +3,22 @@
 # =========================================================
 .DS_Store
 ._*
-
-# =========================================================
-# Editor / IDE
-# =========================================================
-AGENTS.md
-.vscode/
-.idea/
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
 *.swp
 *.swo
 *~
 *.tmp
+*.bak
+
+# =========================================================
+# Editor / IDE
+# =========================================================
+.vscode/
+.idea/
+.zed/
 
 # =========================================================
 # Logs / runtime
@@ -21,7 +26,6 @@ AGENTS.md
 *.log
 logs/
 *.pid
-*.seed
 *.out
 *.err
 
@@ -31,56 +35,32 @@ logs/
 .env
 .env.*
 *.env
+!.env.example
+!.env.sample
 *.key
 *.pem
 *.crt
-secrets/
-*.secret
 
 # =========================================================
-# Archives / artifacts
-# =========================================================
-*.tar
-*.gz
-*.tgz
-*.bz2
-*.zip
-*.7z
-
-# =========================================================
-# Binaries (generic)
+# Build outputs / binaries (generic)
 # =========================================================
 bin/
 build/
 dist/
 out/
-*.exe
-*.dll
-*.so
-*.dylib
 
 # =========================================================
 # Go
 # =========================================================
-# Binaries
 *.test
 *.cover
+*.cov
 *.prof
-.gocache
-.gopath
-.gomodcache
-
-# Build outputs
-/bin/
-/pkg/
-
-# Go workspace
+.gocache/
+.gopath/
+.gomodcache/
 go.work
 go.work.sum
-
-# Coverage
-coverage.out
-*.cov
 
 # =========================================================
 # Python 3
@@ -94,19 +74,15 @@ __pycache__/
 venv/
 env/
 ENV/
+.python-venv/
 
-# Distribution / packaging
-build/
-dist/
+# Packaging
 *.egg-info/
 .eggs/
 *.egg
+*.whl
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage
+# Test / coverage
 .pytest_cache/
 .coverage
 .coverage.*
@@ -114,38 +90,52 @@ htmlcov/
 .tox/
 .nox/
 
-# Type checkers
+# Linters / type checkers / notebooks
 .mypy_cache/
 .pyre/
 .pytype/
-
-# Jupyter
+.ruff_cache/
 .ipynb_checkpoints/
 
 # =========================================================
-# Shell / scripts
+# Ansible
 # =========================================================
-# Temporary files
+*.retry
+.ansible/
+.vault_pass*
+vault_pass*
+*.vault_pass
+
+# =========================================================
+# Docker / Podman
+# =========================================================
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+
+# =========================================================
+# Shell
+# =========================================================
 *.sh.tmp
 *.bash_history
 *.zsh_history
-
-# Local overrides
 *.local.sh
 *.override.sh
 
 # =========================================================
-# Docker / containers
-# =========================================================
-.dockerignore
-docker-compose.override.yml
-
-# =========================================================
-# Testing / misc
+# Temp / cache
 # =========================================================
 tmp/
 temp/
 .cache/
+
+# =========================================================
+# LLMs
+# =========================================================
+
+AGENTS.md
+AGENTS/
 
 # =========================================================
 # Custom

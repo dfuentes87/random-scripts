@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HN Eternal September
+// @name         Hide HN Accounts Since 2020
 // @namespace    https://news.ycombinator.com/
 // @version      1.0.0
-// @description  Hide Hacker News comments (and their descendant subtrees) from accounts created on or after 2020-01-01.
+// @description  Hide Hacker News comments (and their descendant subtrees) from accounts created after 2020-01-01.
 // @match        https://news.ycombinator.com/item?id=*
 // @grant        GM_getValue
 // @grant        GM_setValue
